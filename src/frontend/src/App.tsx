@@ -1,12 +1,19 @@
 import { ScanModal } from "@/components/ScanModal";
+import { SheetManagerSheet } from "@/components/SheetManagerSheet";
 import { SheetView } from "@/components/SheetView";
 import { Toaster } from "@/components/ui/sonner";
 import { useCategories } from "@/hooks/useQueries";
 import type { SheetName } from "@/hooks/useQueries";
 import { SHEETS } from "@/hooks/useQueries";
+import { ICON_MAP } from "@/hooks/useSheetConfig";
+import { useSheetConfig } from "@/hooks/useSheetConfig";
 import { cn } from "@/lib/utils";
-import { Camera, Home } from "lucide-react";
+import { Camera, ChevronDown, Settings } from "lucide-react";
+import type React from "react";
 import { useState } from "react";
+
+const CURRENT_YEAR = new Date().getFullYear();
+const YEAR_OPTIONS = Array.from({ length: 10 }, (_, i) => CURRENT_YEAR - i);
 
 const HOUSE_COLORS: Record<SheetName, string> = {
   Cabin: "text-emerald-600",
@@ -32,7 +39,13 @@ const NAV_IDS: Record<SheetName, string> = {
 export default function App() {
   const [activeSheet, setActiveSheet] = useState<SheetName>("Cabin");
   const [scanOpen, setScanOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [selectedYear, setSelectedYear] = useState(CURRENT_YEAR);
   const { data: categories = [] } = useCategories();
+  const { sheetConfigs, updateSheetConfig } = useSheetConfig();
+
+  const activeCfg = sheetConfigs[activeSheet];
+  const ActiveIcon = activeCfg ? ICON_MAP[activeCfg.icon] : null;
 
   return (
     <div className="flex flex-col w-full max-w-[430px] mx-auto min-h-dvh bg-background relative overflow-hidden">
@@ -51,23 +64,55 @@ export default function App() {
               HOUSE_BG[activeSheet],
             )}
           >
-            <Home className={cn("h-5 w-5", HOUSE_COLORS[activeSheet])} />
+            {ActiveIcon && (
+              <ActiveIcon
+                className={cn("h-5 w-5", HOUSE_COLORS[activeSheet])}
+              />
+            )}
           </div>
           <div>
             <h1 className="font-display font-bold text-lg leading-tight text-foreground">
-              {activeSheet}
+              {activeCfg?.label ?? activeSheet}
             </h1>
             <p className="text-xs text-muted-foreground">House Expenses</p>
           </div>
         </div>
-        <div className="text-xs font-medium text-muted-foreground bg-muted px-2.5 py-1 rounded-full">
-          {new Date().getFullYear()}
+        <div className="flex items-center gap-2">
+          <div className="relative">
+            <select
+              value={selectedYear}
+              onChange={(e) => setSelectedYear(Number(e.target.value))}
+              className="appearance-none text-xs font-medium text-foreground bg-muted pl-2.5 pr-6 py-1 rounded-full border-0 outline-none cursor-pointer focus:ring-2 focus:ring-primary/30"
+              data-ocid="header.year_select"
+              aria-label="Select tax year"
+            >
+              {YEAR_OPTIONS.map((yr) => (
+                <option key={yr} value={yr}>
+                  {yr}
+                </option>
+              ))}
+            </select>
+            <ChevronDown className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 h-3 w-3 text-muted-foreground" />
+          </div>
+          <button
+            type="button"
+            onClick={() => setSettingsOpen(true)}
+            className="w-8 h-8 rounded-full bg-muted flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors tap-highlight-none"
+            data-ocid="header.settings_button"
+            aria-label="Manage sheets"
+          >
+            <Settings className="h-4 w-4" />
+          </button>
         </div>
       </header>
 
       {/* ── Main content ── */}
       <main className="flex-1 overflow-hidden flex flex-col safe-pb">
-        <SheetView sheet={activeSheet} categories={categories} />
+        <SheetView
+          sheet={activeSheet}
+          categories={categories}
+          year={selectedYear}
+        />
       </main>
 
       {/* ── Bottom Navigation ── */}
@@ -76,7 +121,8 @@ export default function App() {
           {SHEETS.slice(0, 2).map((sheet) => (
             <NavTab
               key={sheet}
-              label={sheet}
+              label={sheetConfigs[sheet]?.label ?? sheet}
+              icon={ICON_MAP[sheetConfigs[sheet]?.icon ?? "Home"]}
               active={activeSheet === sheet}
               onClick={() => setActiveSheet(sheet)}
               ocid={NAV_IDS[sheet]}
@@ -103,7 +149,8 @@ export default function App() {
           {SHEETS.slice(2, 4).map((sheet) => (
             <NavTab
               key={sheet}
-              label={sheet}
+              label={sheetConfigs[sheet]?.label ?? sheet}
+              icon={ICON_MAP[sheetConfigs[sheet]?.icon ?? "Home"]}
               active={activeSheet === sheet}
               onClick={() => setActiveSheet(sheet)}
               ocid={NAV_IDS[sheet]}
@@ -123,6 +170,16 @@ export default function App() {
         }}
         categories={categories}
         defaultSheet={activeSheet}
+        sheetConfigs={sheetConfigs}
+      />
+
+      {/* ── Sheet Manager ── */}
+      <SheetManagerSheet
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        sheetKeys={[...SHEETS]}
+        sheetConfigs={sheetConfigs}
+        updateSheetConfig={updateSheetConfig}
       />
 
       <Toaster position="top-center" richColors />
@@ -146,13 +203,21 @@ export default function App() {
 
 interface NavTabProps {
   label: string;
+  icon: React.ElementType;
   active: boolean;
   onClick: () => void;
   ocid: string;
   color: string;
 }
 
-function NavTab({ label, active, onClick, ocid, color }: NavTabProps) {
+function NavTab({
+  label,
+  icon: Icon,
+  active,
+  onClick,
+  ocid,
+  color,
+}: NavTabProps) {
   return (
     <button
       type="button"
@@ -171,7 +236,7 @@ function NavTab({ label, active, onClick, ocid, color }: NavTabProps) {
           color.replace("text-", "bg-"),
         )}
       />
-      <Home
+      <Icon
         className={cn(
           "h-5 w-5 transition-colors",
           active ? color : "text-muted-foreground",

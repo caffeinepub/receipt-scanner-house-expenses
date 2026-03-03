@@ -22,6 +22,7 @@ import { EditModal } from "./EditModal";
 interface SheetViewProps {
   sheet: SheetName;
   categories: string[];
+  year: number;
 }
 
 function formatCurrency(amount: number) {
@@ -68,23 +69,23 @@ function getCategoryColor(category: string) {
   return CATEGORY_COLORS[category] ?? "bg-muted text-muted-foreground";
 }
 
-export function SheetView({ sheet, categories }: SheetViewProps) {
+export function SheetView({ sheet, categories, year }: SheetViewProps) {
   const { data: entries, isLoading } = useSheetEntries(sheet);
   const { data: allEntries } = useAllEntries();
   const [editEntry, setEditEntry] = useState<ExpenseEntry | null>(null);
   const [deleteEntry, setDeleteEntry] = useState<ExpenseEntry | null>(null);
 
-  const sorted = [...(entries ?? [])].sort((a, b) =>
-    b.date.localeCompare(a.date),
-  );
+  const sorted = [...(entries ?? [])]
+    .filter((e) => e.date.startsWith(String(year)))
+    .sort((a, b) => b.date.localeCompare(a.date));
 
   const total = sorted.reduce((sum, e) => sum + e.amount, 0);
 
   const handleExport = () => {
     if (!allEntries) return;
     try {
-      exportToXlsx(allEntries);
-      toast.success("Exported house-expenses.xlsx");
+      exportToXlsx(allEntries, year);
+      toast.success(`Exported house-expenses-${year}.xlsx`);
     } catch {
       toast.error("Export failed");
     }

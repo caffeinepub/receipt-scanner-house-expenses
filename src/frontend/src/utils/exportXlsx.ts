@@ -2,12 +2,14 @@ import * as XLSX from "xlsx";
 import type { ExpenseEntry } from "../backend.d";
 import { SHEETS } from "../hooks/useQueries";
 
-export function exportToXlsx(allEntries: ExpenseEntry[]) {
+export function exportToXlsx(allEntries: ExpenseEntry[], year?: number) {
   const wb = XLSX.utils.book_new();
 
   for (const sheet of SHEETS) {
     const sheetEntries = allEntries
-      .filter((e) => e.sheet === sheet)
+      .filter(
+        (e) => e.sheet === sheet && (!year || e.date.startsWith(String(year))),
+      )
       .sort((a, b) => a.date.localeCompare(b.date));
 
     const rows: (string | number)[][] = [
@@ -47,5 +49,6 @@ export function exportToXlsx(allEntries: ExpenseEntry[]) {
     XLSX.utils.book_append_sheet(wb, ws, sheet);
   }
 
-  XLSX.writeFile(wb, "house-expenses.xlsx");
+  const filename = year ? `house-expenses-${year}.xlsx` : "house-expenses.xlsx";
+  XLSX.writeFile(wb, filename);
 }

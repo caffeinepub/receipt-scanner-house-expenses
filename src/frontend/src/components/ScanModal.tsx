@@ -13,6 +13,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { useAddEntry, useAllCompanyNames } from "@/hooks/useQueries";
 import type { SheetName } from "@/hooks/useQueries";
 import { SHEETS } from "@/hooks/useQueries";
+import { ICON_MAP } from "@/hooks/useSheetConfig";
+import type { SheetConfigMap } from "@/hooks/useSheetConfig";
 import { cn } from "@/lib/utils";
 import { type OcrResult, runOcr } from "@/utils/ocr";
 import { AlertCircle, Camera, Receipt, RefreshCw, Save } from "lucide-react";
@@ -38,6 +40,7 @@ interface ScanModalProps {
   onSaved: (sheet: SheetName) => void;
   categories: string[];
   defaultSheet?: SheetName;
+  sheetConfigs?: SheetConfigMap;
 }
 
 export function ScanModal({
@@ -46,6 +49,7 @@ export function ScanModal({
   onSaved,
   categories,
   defaultSheet,
+  sheetConfigs,
 }: ScanModalProps) {
   const [step, setStep] = useState<ScanStep>("capture");
   const [ocrResult, setOcrResult] = useState<OcrResult | null>(null);
@@ -235,7 +239,21 @@ export function ScanModal({
 
         {/* Step: Capture */}
         {step === "capture" && (
-          <div className="flex-1 flex flex-col items-center justify-center p-6 gap-6 pb-[calc(5rem+env(safe-area-inset-bottom,0px))]">
+          <div className="flex-1 flex flex-col items-center p-6 gap-5 overflow-y-auto">
+            <Button
+              size="lg"
+              className="w-full max-w-xs h-14 text-base font-semibold gap-3 rounded-xl"
+              onClick={() => fileInputRef.current?.click()}
+              data-ocid="scan.capture_button"
+            >
+              <Camera className="h-5 w-5" />
+              Open Camera
+            </Button>
+
+            <p className="text-xs text-muted-foreground text-center">
+              The app will automatically extract date, vendor, and total amount
+            </p>
+
             <div className="w-full max-w-xs aspect-[3/4] rounded-2xl border-2 border-dashed border-border bg-muted/40 flex flex-col items-center justify-center gap-4 relative overflow-hidden">
               <div className="absolute inset-0 opacity-5">
                 <div className="absolute top-1/4 left-0 right-0 h-px bg-foreground" />
@@ -264,20 +282,6 @@ export function ScanModal({
                 Point camera at receipt
               </p>
             </div>
-
-            <Button
-              size="lg"
-              className="w-full max-w-xs h-14 text-base font-semibold gap-3 rounded-xl"
-              onClick={() => fileInputRef.current?.click()}
-              data-ocid="scan.capture_button"
-            >
-              <Camera className="h-5 w-5" />
-              Open Camera
-            </Button>
-
-            <p className="text-xs text-muted-foreground text-center">
-              The app will automatically extract date, vendor, and total amount
-            </p>
           </div>
         )}
 
@@ -325,24 +329,43 @@ export function ScanModal({
                   House *
                 </Label>
                 <div
-                  className="grid grid-cols-4 gap-2"
+                  className="grid grid-cols-2 gap-2"
                   data-ocid="scan.sheet_select"
                 >
-                  {SHEETS.map((s) => (
-                    <button
-                      key={s}
-                      type="button"
-                      onClick={() => setForm((prev) => ({ ...prev, sheet: s }))}
-                      className={cn(
-                        "py-3 rounded-xl text-sm font-medium transition-all border tap-highlight-none",
-                        form.sheet === s
-                          ? "bg-primary text-primary-foreground border-primary shadow-sm"
-                          : "bg-card border-border text-muted-foreground hover:border-primary/50",
-                      )}
-                    >
-                      {s}
-                    </button>
-                  ))}
+                  {SHEETS.map((s) => {
+                    const cfg = sheetConfigs?.[s];
+                    const label = cfg?.label ?? s;
+                    const IconComp = cfg ? ICON_MAP[cfg.icon] : null;
+                    return (
+                      <button
+                        key={s}
+                        type="button"
+                        onClick={() =>
+                          setForm((prev) => ({ ...prev, sheet: s }))
+                        }
+                        className={cn(
+                          "py-3 px-2 rounded-xl text-sm font-medium transition-all border tap-highlight-none flex flex-col items-center gap-1",
+                          form.sheet === s
+                            ? "bg-primary text-primary-foreground border-primary shadow-sm"
+                            : "bg-card border-border text-muted-foreground hover:border-primary/50",
+                        )}
+                      >
+                        {IconComp && (
+                          <IconComp
+                            className={cn(
+                              "h-4 w-4",
+                              form.sheet === s
+                                ? "text-primary-foreground"
+                                : "text-muted-foreground",
+                            )}
+                          />
+                        )}
+                        <span className="truncate w-full text-center">
+                          {label}
+                        </span>
+                      </button>
+                    );
+                  })}
                 </div>
                 {errors.sheet && (
                   <p className="text-xs text-destructive flex items-center gap-1">
