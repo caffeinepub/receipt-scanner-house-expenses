@@ -12,7 +12,154 @@ interface CategorySelectProps {
   onChange: (value: string) => void;
 }
 
-export function CategorySelect({
+// Detect touch-only device (iPhone, iPad, Android)
+function isTouchDevice(): boolean {
+  return window.matchMedia("(hover: none) and (pointer: coarse)").matches;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MOBILE: Native <select> — 100% reliable on iOS Safari
+// ─────────────────────────────────────────────────────────────────────────────
+function MobileCategorySelect({
+  categories,
+  value,
+  onChange,
+}: CategorySelectProps) {
+  const [showAddInput, setShowAddInput] = useState(false);
+  const [newCategory, setNewCategory] = useState("");
+  const addCategory = useAddCategory();
+  const addInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (showAddInput) {
+      setTimeout(() => addInputRef.current?.focus(), 100);
+    }
+  }, [showAddInput]);
+
+  const handleSelectChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const selected = e.target.value;
+    if (selected === "__add_new__") {
+      // Reset select back to current value so it doesn't show "+ Add new…"
+      e.target.value = value || "";
+      setShowAddInput(true);
+      setNewCategory("");
+    } else {
+      onChange(selected);
+      setShowAddInput(false);
+    }
+  };
+
+  const handleSaveNewCategory = async () => {
+    const trimmed = newCategory.trim();
+    if (!trimmed) return;
+    // Set the value immediately so validation passes right away
+    onChange(trimmed);
+    setShowAddInput(false);
+    setNewCategory("");
+    if (categories.includes(trimmed)) {
+      return;
+    }
+    try {
+      await addCategory.mutateAsync(trimmed);
+      toast.success(`Category "${trimmed}" added`);
+    } catch {
+      toast.error(
+        "Failed to save category — it will still be used for this entry",
+      );
+    }
+  };
+
+  // Categories to show in the select — include the current value even if it
+  // isn't in the list yet (e.g. a newly typed category before the backend
+  // query refreshes)
+  const selectOptions =
+    value && !categories.includes(value) ? [...categories, value] : categories;
+
+  return (
+    <div className="space-y-2">
+      {/* Native select wrapper */}
+      <div className="relative" data-ocid="scan.category_select">
+        <select
+          value={value || ""}
+          onChange={handleSelectChange}
+          style={{
+            WebkitAppearance: "none",
+            MozAppearance: "none",
+            appearance: "none",
+          }}
+          className="w-full h-12 px-4 pr-10 rounded-md border border-border bg-card text-base text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 cursor-pointer"
+        >
+          <option value="" disabled>
+            Select category…
+          </option>
+          {selectOptions.map((cat) => (
+            <option key={cat} value={cat}>
+              {cat}
+            </option>
+          ))}
+          <option value="__add_new__">+ Add new category…</option>
+        </select>
+        {/* Custom chevron — pointer-events: none so it doesn't block the select */}
+        <ChevronDown
+          className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none"
+          aria-hidden="true"
+        />
+      </div>
+
+      {/* Inline "add new" input — appears below the select when chosen */}
+      {showAddInput && (
+        <div
+          className="flex gap-2 items-center pt-1"
+          data-ocid="category.add_input"
+        >
+          <Input
+            ref={addInputRef}
+            value={newCategory}
+            onChange={(e) => setNewCategory(e.target.value)}
+            placeholder="New category name…"
+            className="h-11 bg-card flex-1"
+            onKeyDown={(e) => {
+              if (e.key === "Enter") handleSaveNewCategory();
+              if (e.key === "Escape") {
+                setShowAddInput(false);
+                setNewCategory("");
+              }
+            }}
+            data-ocid="category.new_input"
+          />
+          <Button
+            type="button"
+            size="icon"
+            className="h-11 w-11 shrink-0"
+            onClick={handleSaveNewCategory}
+            disabled={addCategory.isPending || !newCategory.trim()}
+            data-ocid="category.confirm_button"
+          >
+            <Check className="h-4 w-4" />
+          </Button>
+          <Button
+            type="button"
+            size="icon"
+            variant="outline"
+            className="h-11 w-11 shrink-0"
+            onClick={() => {
+              setShowAddInput(false);
+              setNewCategory("");
+            }}
+            data-ocid="category.cancel_button"
+          >
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DESKTOP: Custom scrollable overlay dropdown
+// ─────────────────────────────────────────────────────────────────────────────
+function DesktopCategorySelect({
   categories,
   value,
   onChange,
@@ -22,16 +169,14 @@ export function CategorySelect({
   const [newCategory, setNewCategory] = useState("");
   const addCategory = useAddCategory();
   const addInputRef = useRef<HTMLInputElement>(null);
-  const overlayRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
 
-  // Focus the add input when it appears
   useEffect(() => {
     if (showAddInput) {
       setTimeout(() => addInputRef.current?.focus(), 50);
     }
   }, [showAddInput]);
 
-  // Prevent body scroll while overlay is open
   useEffect(() => {
     if (overlayOpen) {
       document.body.style.overflow = "hidden";
@@ -73,8 +218,8 @@ export function CategorySelect({
 
   return (
     <>
-      {/* Trigger button */}
       <button
+        ref={triggerRef}
         type="button"
         onClick={() => setOverlayOpen(true)}
         className="w-full h-12 px-4 flex items-center justify-between rounded-md border border-border bg-card text-base transition-colors hover:border-primary/50 focus:outline-none focus:ring-2 focus:ring-primary/30"
@@ -86,39 +231,36 @@ export function CategorySelect({
         <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" />
       </button>
 
-      {/* Full-screen overlay rendered via portal to escape Sheet stacking context (iOS fix) */}
       {overlayOpen &&
         createPortal(
           <div
-            ref={overlayRef}
             style={{
               position: "fixed",
               inset: 0,
-              zIndex: 99999,
+              zIndex: 999999,
               display: "flex",
               flexDirection: "column",
               justifyContent: "flex-end",
+              pointerEvents: "auto",
             }}
           >
-            {/* Backdrop */}
-            <div
-              role="button"
-              tabIndex={-1}
+            {/* Backdrop — uses a button for keyboard accessibility */}
+            <button
+              type="button"
               aria-label="Close category picker"
               style={{
                 position: "absolute",
                 inset: 0,
                 backgroundColor: "rgba(0,0,0,0.5)",
+                border: "none",
+                cursor: "default",
+                padding: 0,
               }}
               onClick={handleClose}
-              onKeyDown={(e) => {
-                if (e.key === "Escape" || e.key === "Enter") handleClose();
-              }}
             />
 
-            {/* Bottom sheet panel */}
+            {/* Panel */}
             <div
-              role="presentation"
               style={{
                 position: "relative",
                 background: "hsl(var(--background))",
@@ -127,10 +269,8 @@ export function CategorySelect({
                 boxShadow: "0 -4px 32px rgba(0,0,0,0.15)",
                 display: "flex",
                 flexDirection: "column",
-                maxHeight: "70dvh",
+                maxHeight: "70vh",
               }}
-              onClick={(e) => e.stopPropagation()}
-              onKeyDown={(e) => e.stopPropagation()}
             >
               {/* Header */}
               <div
@@ -173,12 +313,11 @@ export function CategorySelect({
                 </button>
               </div>
 
-              {/* Category list */}
+              {/* Scrollable list */}
               <div
                 style={{
                   flex: 1,
                   overflowY: "auto",
-                  WebkitOverflowScrolling: "touch",
                 }}
               >
                 {categories.map((cat) => (
@@ -194,7 +333,10 @@ export function CategorySelect({
                       padding: "14px 20px",
                       fontSize: "1rem",
                       textAlign: "left",
-                      background: "transparent",
+                      background:
+                        value === cat
+                          ? "hsl(var(--primary) / 0.08)"
+                          : "transparent",
                       border: "none",
                       borderBottom: "1px solid hsl(var(--border) / 0.4)",
                       cursor: "pointer",
@@ -217,7 +359,7 @@ export function CategorySelect({
                 ))}
               </div>
 
-              {/* Add new category */}
+              {/* Add new */}
               <div
                 style={{
                   padding: "12px 16px",
@@ -289,13 +431,24 @@ export function CategorySelect({
                   </button>
                 )}
               </div>
-
-              {/* Safe area spacer */}
-              <div style={{ height: "env(safe-area-inset-bottom, 0px)" }} />
             </div>
           </div>,
           document.body,
         )}
     </>
   );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PUBLIC EXPORT: Route to mobile or desktop variant
+// ─────────────────────────────────────────────────────────────────────────────
+export function CategorySelect(props: CategorySelectProps) {
+  // Detect on first render; no need to react to changes mid-session
+  const [isTouch] = useState(() => isTouchDevice());
+
+  if (isTouch) {
+    return <MobileCategorySelect {...props} />;
+  }
+
+  return <DesktopCategorySelect {...props} />;
 }
