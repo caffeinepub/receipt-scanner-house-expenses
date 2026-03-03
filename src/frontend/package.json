@@ -90,8 +90,6 @@
     "react-quill-new": "3.4.6",
     "three": "^0.176.0",
     "zustand": "~5.0.5",
-    "motion": "^12.34.3",
-    "xlsx": "^0.18.5",
-    "tesseract.js": "^5.1.1"
+    "motion": "^12.34.3"
   }
 }

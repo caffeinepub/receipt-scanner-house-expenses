@@ -1,16 +1,8 @@
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectSeparator,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { useAddCategory } from "@/hooks/useQueries";
-import { Check, Plus } from "lucide-react";
-import { useState } from "react";
+import { Check, ChevronDown, Plus, X } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
 interface CategorySelectProps {
@@ -24,26 +16,54 @@ export function CategorySelect({
   value,
   onChange,
 }: CategorySelectProps) {
+  const [overlayOpen, setOverlayOpen] = useState(false);
   const [showAddInput, setShowAddInput] = useState(false);
   const [newCategory, setNewCategory] = useState("");
-  const [selectOpen, setSelectOpen] = useState(false);
   const addCategory = useAddCategory();
+  const addInputRef = useRef<HTMLInputElement>(null);
+  const overlayRef = useRef<HTMLDivElement>(null);
+
+  // Focus the add input when it appears
+  useEffect(() => {
+    if (showAddInput) {
+      setTimeout(() => addInputRef.current?.focus(), 50);
+    }
+  }, [showAddInput]);
+
+  // Prevent body scroll while overlay is open
+  useEffect(() => {
+    if (overlayOpen) {
+      document.body.style.overflow = "hidden";
+    } else {
+      document.body.style.overflow = "";
+    }
+    return () => {
+      document.body.style.overflow = "";
+    };
+  }, [overlayOpen]);
+
+  const handleClose = () => {
+    setOverlayOpen(false);
+    setShowAddInput(false);
+    setNewCategory("");
+  };
+
+  const handleSelect = (cat: string) => {
+    onChange(cat);
+    handleClose();
+  };
 
   const handleAddCategory = async () => {
     const trimmed = newCategory.trim();
     if (!trimmed) return;
     if (categories.includes(trimmed)) {
-      onChange(trimmed);
-      setShowAddInput(false);
-      setNewCategory("");
+      handleSelect(trimmed);
       return;
     }
-
     try {
       await addCategory.mutateAsync(trimmed);
       onChange(trimmed);
-      setShowAddInput(false);
-      setNewCategory("");
+      handleClose();
       toast.success(`Category "${trimmed}" added`);
     } catch {
       toast.error("Failed to add category");
@@ -51,73 +71,228 @@ export function CategorySelect({
   };
 
   return (
-    <div className="space-y-2">
-      <Select
-        value={value}
-        onValueChange={(v) => {
-          if (v === "__add_new__") {
-            setShowAddInput(true);
-            setSelectOpen(false);
-          } else {
-            onChange(v);
-            setShowAddInput(false);
-          }
-        }}
-        open={selectOpen}
-        onOpenChange={setSelectOpen}
+    <>
+      {/* Trigger button */}
+      <button
+        type="button"
+        onClick={() => setOverlayOpen(true)}
+        className="w-full h-12 px-4 flex items-center justify-between rounded-md border border-border bg-card text-base transition-colors hover:border-primary/50 focus:outline-none focus:ring-2 focus:ring-primary/30"
+        data-ocid="scan.category_select"
       >
-        <SelectTrigger
-          className="h-12 text-base bg-card border-border"
-          data-ocid="scan.category_select"
-        >
-          <SelectValue placeholder="Select category…" />
-        </SelectTrigger>
-        <SelectContent className="max-h-[50vh] overflow-y-auto">
-          {categories.map((cat) => (
-            <SelectItem key={cat} value={cat} className="text-base py-3">
-              {cat}
-            </SelectItem>
-          ))}
-          <SelectSeparator />
-          <SelectItem
-            value="__add_new__"
-            className="text-primary font-medium py-3"
-          >
-            <div className="flex items-center gap-2">
-              <Plus className="h-4 w-4" />
-              Add new category…
-            </div>
-          </SelectItem>
-        </SelectContent>
-      </Select>
+        <span className={value ? "text-foreground" : "text-muted-foreground"}>
+          {value || "Select category…"}
+        </span>
+        <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" />
+      </button>
 
-      {showAddInput && (
-        <div className="flex gap-2">
-          <Input
-            value={newCategory}
-            onChange={(e) => setNewCategory(e.target.value)}
-            placeholder="Category name…"
-            className="h-11 bg-card"
-            onKeyDown={(e) => {
-              if (e.key === "Enter") handleAddCategory();
-              if (e.key === "Escape") {
-                setShowAddInput(false);
-                setNewCategory("");
-              }
+      {/* Full-screen overlay rendered inline at root level via fixed positioning */}
+      {overlayOpen && (
+        <div
+          ref={overlayRef}
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 99999,
+            display: "flex",
+            flexDirection: "column",
+            justifyContent: "flex-end",
+          }}
+        >
+          {/* Backdrop */}
+          <div
+            role="button"
+            tabIndex={-1}
+            aria-label="Close category picker"
+            style={{
+              position: "absolute",
+              inset: 0,
+              backgroundColor: "rgba(0,0,0,0.5)",
             }}
-            autoFocus
-            data-ocid="scan.add_category_input"
+            onClick={handleClose}
+            onKeyDown={(e) => {
+              if (e.key === "Escape" || e.key === "Enter") handleClose();
+            }}
           />
-          <Button
-            size="icon"
-            className="h-11 w-11 shrink-0"
-            onClick={handleAddCategory}
-            disabled={addCategory.isPending || !newCategory.trim()}
+
+          {/* Bottom sheet panel */}
+          <div
+            role="presentation"
+            style={{
+              position: "relative",
+              background: "hsl(var(--background))",
+              borderTopLeftRadius: "1rem",
+              borderTopRightRadius: "1rem",
+              boxShadow: "0 -4px 32px rgba(0,0,0,0.15)",
+              display: "flex",
+              flexDirection: "column",
+              maxHeight: "70dvh",
+            }}
+            onClick={(e) => e.stopPropagation()}
+            onKeyDown={(e) => e.stopPropagation()}
           >
-            <Check className="h-4 w-4" />
-          </Button>
+            {/* Header */}
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                padding: "16px 20px 12px",
+                borderBottom: "1px solid hsl(var(--border))",
+                flexShrink: 0,
+              }}
+            >
+              <span
+                style={{
+                  fontWeight: 600,
+                  fontSize: "1rem",
+                  color: "hsl(var(--foreground))",
+                }}
+              >
+                Select Category
+              </span>
+              <button
+                type="button"
+                onClick={handleClose}
+                style={{
+                  width: 32,
+                  height: 32,
+                  borderRadius: "50%",
+                  background: "hsl(var(--muted))",
+                  color: "hsl(var(--muted-foreground))",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  border: "none",
+                  cursor: "pointer",
+                }}
+                data-ocid="category.close_button"
+              >
+                <X style={{ width: 16, height: 16 }} />
+              </button>
+            </div>
+
+            {/* Category list */}
+            <div
+              style={{
+                flex: 1,
+                overflowY: "auto",
+                WebkitOverflowScrolling: "touch",
+              }}
+            >
+              {categories.map((cat) => (
+                <button
+                  key={cat}
+                  type="button"
+                  onClick={() => handleSelect(cat)}
+                  style={{
+                    width: "100%",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    padding: "14px 20px",
+                    fontSize: "1rem",
+                    textAlign: "left",
+                    background: "transparent",
+                    border: "none",
+                    borderBottom: "1px solid hsl(var(--border) / 0.4)",
+                    cursor: "pointer",
+                    color: "hsl(var(--foreground))",
+                  }}
+                  data-ocid="category.item"
+                >
+                  <span>{cat}</span>
+                  {value === cat && (
+                    <Check
+                      style={{
+                        width: 16,
+                        height: 16,
+                        color: "hsl(var(--primary))",
+                        flexShrink: 0,
+                      }}
+                    />
+                  )}
+                </button>
+              ))}
+            </div>
+
+            {/* Add new category */}
+            <div
+              style={{
+                padding: "12px 16px",
+                borderTop: "1px solid hsl(var(--border))",
+                flexShrink: 0,
+              }}
+            >
+              {showAddInput ? (
+                <div style={{ display: "flex", gap: 8 }}>
+                  <Input
+                    ref={addInputRef}
+                    value={newCategory}
+                    onChange={(e) => setNewCategory(e.target.value)}
+                    placeholder="Category name…"
+                    className="h-11 bg-card flex-1"
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") handleAddCategory();
+                      if (e.key === "Escape") {
+                        setShowAddInput(false);
+                        setNewCategory("");
+                      }
+                    }}
+                    data-ocid="category.add_input"
+                  />
+                  <Button
+                    size="icon"
+                    className="h-11 w-11 shrink-0"
+                    onClick={handleAddCategory}
+                    disabled={addCategory.isPending || !newCategory.trim()}
+                    data-ocid="category.confirm_button"
+                  >
+                    <Check className="h-4 w-4" />
+                  </Button>
+                  <Button
+                    size="icon"
+                    variant="outline"
+                    className="h-11 w-11 shrink-0"
+                    onClick={() => {
+                      setShowAddInput(false);
+                      setNewCategory("");
+                    }}
+                    data-ocid="category.cancel_button"
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setShowAddInput(true)}
+                  style={{
+                    width: "100%",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    padding: "12px",
+                    borderRadius: 12,
+                    color: "hsl(var(--primary))",
+                    fontWeight: 500,
+                    fontSize: "0.875rem",
+                    background: "transparent",
+                    border: "none",
+                    cursor: "pointer",
+                  }}
+                  data-ocid="category.add_new_button"
+                >
+                  <Plus style={{ width: 16, height: 16 }} />
+                  Add new category…
+                </button>
+              )}
+            </div>
+
+            {/* Safe area spacer */}
+            <div style={{ height: "env(safe-area-inset-bottom, 0px)" }} />
+          </div>
         </div>
       )}
-    </div>
+    </>
   );
 }

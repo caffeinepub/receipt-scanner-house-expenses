@@ -81,10 +81,10 @@ export function SheetView({ sheet, categories, year }: SheetViewProps) {
 
   const total = sorted.reduce((sum, e) => sum + e.amount, 0);
 
-  const handleExport = () => {
+  const handleExport = async () => {
     if (!allEntries) return;
     try {
-      exportToXlsx(allEntries, year);
+      await exportToXlsx(allEntries, year);
       toast.success(`Exported house-expenses-${year}.xlsx`);
     } catch {
       toast.error("Export failed");

@@ -1,11 +1,51 @@
-import { createWorker } from "tesseract.js";
-
 export interface OcrResult {
   date: string;
   companyName: string;
   amount: number;
   rawText: string;
   confidence: number;
+}
+
+type TesseractWorker = {
+  recognize(image: string | Blob | File): Promise<{
+    data: { text: string; confidence: number };
+  }>;
+  terminate(): Promise<void>;
+};
+
+type TesseractLib = {
+  createWorker(lang: string): Promise<TesseractWorker>;
+};
+
+type WindowWithTesseract = Window &
+  typeof globalThis & { Tesseract?: TesseractLib };
+
+let tesseractLoading: Promise<TesseractLib> | null = null;
+
+async function getTesseract(): Promise<TesseractLib> {
+  const win = window as WindowWithTesseract;
+  if (win.Tesseract) return win.Tesseract;
+
+  if (!tesseractLoading) {
+    tesseractLoading = new Promise<TesseractLib>((resolve, reject) => {
+      const script = document.createElement("script");
+      script.src =
+        "https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js";
+      script.onload = () => {
+        const lib = (window as WindowWithTesseract).Tesseract;
+        if (lib) {
+          resolve(lib);
+        } else {
+          reject(new Error("Tesseract did not attach to window"));
+        }
+      };
+      script.onerror = () =>
+        reject(new Error("Failed to load Tesseract from CDN"));
+      document.head.appendChild(script);
+    });
+  }
+
+  return tesseractLoading;
 }
 
 /**
@@ -178,13 +218,14 @@ function parseCompanyName(text: string): string {
 }
 
 /**
- * Run OCR on an image file and extract receipt fields.
+ * Run OCR on an image file or blob and extract receipt fields.
  */
-export async function runOcr(imageFile: File): Promise<OcrResult> {
-  const worker = await createWorker("eng");
+export async function runOcr(imageSource: File | Blob): Promise<OcrResult> {
+  const Tesseract = await getTesseract();
+  const worker = await Tesseract.createWorker("eng");
 
   try {
-    const imageUrl = URL.createObjectURL(imageFile);
+    const imageUrl = URL.createObjectURL(imageSource);
     const result = await worker.recognize(imageUrl);
     URL.revokeObjectURL(imageUrl);
 

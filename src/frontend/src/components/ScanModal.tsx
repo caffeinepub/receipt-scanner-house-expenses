@@ -13,15 +13,18 @@ import { Textarea } from "@/components/ui/textarea";
 import { useAddEntry, useAllCompanyNames } from "@/hooks/useQueries";
 import type { SheetName } from "@/hooks/useQueries";
 import { SHEETS } from "@/hooks/useQueries";
+import { useScanFolders } from "@/hooks/useScanFolders";
 import { ICON_MAP } from "@/hooks/useSheetConfig";
 import type { SheetConfigMap } from "@/hooks/useSheetConfig";
 import { cn } from "@/lib/utils";
+import { cropReceipt, stitchImages } from "@/utils/imageProcessing";
 import { type OcrResult, runOcr } from "@/utils/ocr";
-import { AlertCircle, Camera, Receipt, RefreshCw, Save } from "lucide-react";
-import { useCallback, useRef, useState } from "react";
+import { AlertCircle, Camera, Receipt, RefreshCw, Save, X } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { CategorySelect } from "./CategorySelect";
 import { CompanySelect } from "./CompanySelect";
+import { FolderSelect } from "./FolderSelect";
 
 type ScanStep = "capture" | "processing" | "review";
 
@@ -55,6 +58,12 @@ export function ScanModal({
   const [ocrResult, setOcrResult] = useState<OcrResult | null>(null);
   const [ocrProgress, setOcrProgress] = useState(0);
   const [capturedImage, setCapturedImage] = useState<string | null>(null);
+
+  // Multi-scan state
+  const [scannedBlobs, setScannedBlobs] = useState<Blob[]>([]);
+  const [scannedPreviews, setScannedPreviews] = useState<string[]>([]);
+  const [selectedFolderId, setSelectedFolderId] = useState<string>("");
+
   const [form, setForm] = useState<ScanFormData>({
     sheet: defaultSheet ?? "",
     date: new Date().toISOString().split("T")[0],
@@ -70,12 +79,25 @@ export function ScanModal({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const addEntry = useAddEntry();
   const existingCompanies = useAllCompanyNames();
+  const { folders, createFolder, addEntryToFolder } = useScanFolders();
 
   const resetState = useCallback(() => {
     setStep("capture");
     setOcrResult(null);
     setOcrProgress(0);
+    if (capturedImage) {
+      URL.revokeObjectURL(capturedImage);
+    }
     setCapturedImage(null);
+    // Revoke all preview object URLs
+    setScannedPreviews((prev) => {
+      for (const url of prev) {
+        URL.revokeObjectURL(url);
+      }
+      return [];
+    });
+    setScannedBlobs([]);
+    setSelectedFolderId("");
     setForm({
       sheet: defaultSheet ?? "",
       date: new Date().toISOString().split("T")[0],
@@ -85,7 +107,17 @@ export function ScanModal({
       notes: "",
     });
     setErrors({});
-  }, [defaultSheet]);
+  }, [defaultSheet, capturedImage]);
+
+  // Auto-open camera when modal opens
+  useEffect(() => {
+    if (open) {
+      const timer = setTimeout(() => {
+        fileInputRef.current?.click();
+      }, 300);
+      return () => clearTimeout(timer);
+    }
+  }, [open]);
 
   const handleClose = () => {
     resetState();
@@ -96,19 +128,61 @@ export function ScanModal({
     const file = e.target.files?.[0];
     if (!file) return;
 
-    // Show captured image preview
-    const previewUrl = URL.createObjectURL(file);
-    setCapturedImage(previewUrl);
+    // Reset file input so same file can be selected again if needed
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+
+    try {
+      // Crop the receipt from the background
+      const croppedBlob = await cropReceipt(file);
+
+      // Create preview URL for the cropped blob
+      const previewUrl = URL.createObjectURL(croppedBlob);
+
+      setScannedBlobs((prev) => [...prev, croppedBlob]);
+      setScannedPreviews((prev) => [...prev, previewUrl]);
+    } catch {
+      // If cropping fails, use original file
+      const previewUrl = URL.createObjectURL(file);
+      setScannedBlobs((prev) => [...prev, file]);
+      setScannedPreviews((prev) => [...prev, previewUrl]);
+    }
+  };
+
+  const handleRemoveScan = (index: number) => {
+    setScannedPreviews((prev) => {
+      URL.revokeObjectURL(prev[index]);
+      return prev.filter((_, i) => i !== index);
+    });
+    setScannedBlobs((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const handleContinueToReview = async () => {
+    if (scannedBlobs.length === 0) return;
+
     setStep("processing");
     setOcrProgress(10);
 
     try {
+      // Stitch all captured blobs top-to-bottom
+      const stitchedBlob = await stitchImages(scannedBlobs);
+
+      // Show preview of stitched image
+      const stitchedUrl = URL.createObjectURL(stitchedBlob);
+      setCapturedImage(stitchedUrl);
+
       // Simulate progress while OCR runs
       const progressInterval = setInterval(() => {
         setOcrProgress((p) => Math.min(p + 8, 85));
       }, 400);
 
-      const result = await runOcr(file);
+      // Convert stitched blob to File for OCR
+      const stitchedFile = new File([stitchedBlob], "receipt.jpg", {
+        type: "image/jpeg",
+      });
+
+      const result = await runOcr(stitchedFile);
 
       clearInterval(progressInterval);
       setOcrProgress(100);
@@ -127,11 +201,6 @@ export function ScanModal({
     } catch {
       toast.error("OCR failed — please fill in details manually");
       setStep("review");
-    }
-
-    // Reset file input
-    if (fileInputRef.current) {
-      fileInputRef.current.value = "";
     }
   };
 
@@ -162,6 +231,32 @@ export function ScanModal({
         notes: form.notes.trim(),
       });
 
+      // Save to folder if one was selected
+      if (selectedFolderId && scannedBlobs.length > 0) {
+        try {
+          // Convert the stitched blob to a data URL for persistent storage
+          const blobToSave =
+            scannedBlobs.length === 1
+              ? scannedBlobs[0]
+              : await stitchImages(scannedBlobs);
+
+          const reader = new FileReader();
+          reader.onloadend = () => {
+            const dataUrl = reader.result as string;
+            addEntryToFolder(selectedFolderId, {
+              imageDataUrl: dataUrl,
+              savedAt: new Date().toISOString(),
+              receiptDate: form.date,
+              companyName: form.companyName.trim(),
+              amount: Number.parseFloat(form.amount),
+            });
+          };
+          reader.readAsDataURL(blobToSave);
+        } catch {
+          // Non-fatal — folder save failure shouldn't block the entry save
+        }
+      }
+
       toast.success("Receipt saved successfully");
       onSaved(form.sheet as SheetName);
       resetState();
@@ -177,10 +272,21 @@ export function ScanModal({
     }
     setCapturedImage(null);
     setOcrResult(null);
+    setScannedPreviews((prev) => {
+      for (const url of prev) {
+        URL.revokeObjectURL(url);
+      }
+      return [];
+    });
+    setScannedBlobs([]);
     setStep("capture");
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
     }
+    // Auto-open camera for rescan
+    setTimeout(() => {
+      fileInputRef.current?.click();
+    }, 100);
   };
 
   const confidenceColor =
@@ -237,66 +343,150 @@ export function ScanModal({
           className="hidden"
         />
 
-        {/* Step: Capture */}
+        {/* ── Step: Capture ── */}
         {step === "capture" && (
-          <div className="flex-1 flex flex-col items-center p-6 gap-5 overflow-y-auto">
-            <Button
-              size="lg"
-              className="w-full max-w-xs h-14 text-base font-semibold gap-3 rounded-xl"
-              onClick={() => fileInputRef.current?.click()}
-              data-ocid="scan.capture_button"
-            >
-              <Camera className="h-5 w-5" />
-              Open Camera
-            </Button>
+          <div className="flex-1 flex flex-col overflow-hidden">
+            {/* Thumbnail strip of already-captured scans */}
+            {scannedPreviews.length > 0 ? (
+              <div className="flex-1 overflow-y-auto px-4 pt-4 pb-2 space-y-2">
+                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                  Captured scans ({scannedPreviews.length})
+                </p>
+                <div className="space-y-2">
+                  {scannedPreviews.map((url, index) => (
+                    <div
+                      key={url}
+                      className="relative rounded-xl overflow-hidden border border-border bg-muted/20"
+                      style={{ height: "120px" }}
+                    >
+                      <img
+                        src={url}
+                        alt={`Scan ${index + 1}`}
+                        className="w-full h-full object-cover"
+                      />
+                      <div className="absolute inset-0 bg-gradient-to-t from-black/20 to-transparent pointer-events-none" />
+                      <span className="absolute bottom-2 left-3 text-white text-xs font-semibold drop-shadow">
+                        Part {index + 1}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveScan(index)}
+                        className="absolute top-2 right-2 w-7 h-7 rounded-full bg-black/60 hover:bg-black/80 flex items-center justify-center transition-colors"
+                        aria-label={`Remove scan ${index + 1}`}
+                        data-ocid={`scan.thumbnail_remove.${index + 1}`}
+                      >
+                        <X className="h-3.5 w-3.5 text-white" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
 
-            <p className="text-xs text-muted-foreground text-center">
-              The app will automatically extract date, vendor, and total amount
-            </p>
-
-            <div className="w-full max-w-xs aspect-[3/4] rounded-2xl border-2 border-dashed border-border bg-muted/40 flex flex-col items-center justify-center gap-4 relative overflow-hidden">
-              <div className="absolute inset-0 opacity-5">
-                <div className="absolute top-1/4 left-0 right-0 h-px bg-foreground" />
-                <div className="absolute top-3/4 left-0 right-0 h-px bg-foreground" />
-                <div className="absolute top-0 bottom-0 left-1/4 w-px bg-foreground" />
-                <div className="absolute top-0 bottom-0 left-3/4 w-px bg-foreground" />
+                <p className="text-xs text-muted-foreground text-center pt-1">
+                  Scans will be stitched top-to-bottom
+                </p>
               </div>
-              {/* Corner guides */}
-              {[
-                "top-3 left-3",
-                "top-3 right-3",
-                "bottom-3 left-3",
-                "bottom-3 right-3",
-              ].map((pos) => (
-                <div
-                  key={pos}
-                  className={cn(
-                    "absolute w-6 h-6 border-primary",
-                    `${pos.includes("top") ? "border-t-2" : "border-b-2"} ${pos.includes("left") ? "border-l-2" : "border-r-2"}`,
-                    pos,
-                  )}
-                />
-              ))}
-              <Receipt className="h-16 w-16 text-muted-foreground/40" />
-              <p className="text-sm text-muted-foreground text-center px-4">
-                Point camera at receipt
-              </p>
+            ) : (
+              /* Empty state — show receipt viewfinder placeholder */
+              <div className="flex-1 flex flex-col items-center justify-center px-6 gap-4">
+                <div className="w-full max-w-xs aspect-[3/4] rounded-2xl border-2 border-dashed border-border bg-muted/40 flex flex-col items-center justify-center gap-4 relative overflow-hidden">
+                  <div className="absolute inset-0 opacity-5">
+                    <div className="absolute top-1/4 left-0 right-0 h-px bg-foreground" />
+                    <div className="absolute top-3/4 left-0 right-0 h-px bg-foreground" />
+                    <div className="absolute top-0 bottom-0 left-1/4 w-px bg-foreground" />
+                    <div className="absolute top-0 bottom-0 left-3/4 w-px bg-foreground" />
+                  </div>
+                  {/* Corner guides */}
+                  {(
+                    [
+                      "top-3 left-3",
+                      "top-3 right-3",
+                      "bottom-3 left-3",
+                      "bottom-3 right-3",
+                    ] as const
+                  ).map((pos) => (
+                    <div
+                      key={pos}
+                      className={cn(
+                        "absolute w-6 h-6 border-primary",
+                        `${pos.includes("top") ? "border-t-2" : "border-b-2"} ${pos.includes("left") ? "border-l-2" : "border-r-2"}`,
+                        pos,
+                      )}
+                    />
+                  ))}
+                  <Receipt className="h-16 w-16 text-muted-foreground/40" />
+                  <p className="text-sm text-muted-foreground text-center px-4">
+                    Camera will open automatically
+                  </p>
+                </div>
+                <p className="text-xs text-muted-foreground text-center max-w-xs">
+                  Scan the top half first, then tap "Add another scan" for long
+                  receipts
+                </p>
+              </div>
+            )}
+
+            {/* Bottom actions */}
+            <div className="px-4 pb-6 pt-3 space-y-2.5 shrink-0 border-t border-border/50">
+              <Button
+                variant="outline"
+                className="w-full h-12 gap-2 font-medium"
+                onClick={() => fileInputRef.current?.click()}
+                data-ocid="scan.add_another_button"
+              >
+                <Camera className="h-4 w-4" />
+                {scannedPreviews.length === 0
+                  ? "Open Camera"
+                  : "Add another scan"}
+              </Button>
+              <Button
+                className="w-full h-12 gap-2 font-semibold"
+                disabled={scannedBlobs.length === 0}
+                onClick={handleContinueToReview}
+                data-ocid="scan.continue_button"
+              >
+                Continue to Review
+              </Button>
             </div>
           </div>
         )}
 
-        {/* Step: Processing */}
+        {/* ── Step: Processing ── */}
         {step === "processing" && (
-          <div className="flex-1 flex flex-col items-center justify-center p-6 gap-6">
+          <div className="flex-1 flex flex-col items-center p-6 gap-6 overflow-y-auto">
+            {/* Thumbnail strip of captured scans */}
+            {scannedPreviews.length > 0 && (
+              <div className="w-full space-y-2">
+                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                  {scannedPreviews.length} scan
+                  {scannedPreviews.length !== 1 ? "s" : ""} — stitching…
+                </p>
+                <div className="flex gap-2 overflow-x-auto pb-1">
+                  {scannedPreviews.map((url, i) => (
+                    <div
+                      key={url}
+                      className="shrink-0 w-20 h-20 rounded-xl overflow-hidden border border-border"
+                    >
+                      <img
+                        src={url}
+                        alt={`Scan part ${i + 1}`}
+                        className="w-full h-full object-cover"
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {capturedImage && (
               <div className="w-full max-w-xs aspect-[3/4] rounded-2xl overflow-hidden border border-border">
                 <img
                   src={capturedImage}
-                  alt="Captured receipt"
-                  className="w-full h-full object-cover"
+                  alt="Stitched receipt"
+                  className="w-full h-full object-contain"
                 />
               </div>
             )}
+
             <div className="w-full max-w-xs space-y-3">
               <p className="text-sm font-medium text-center text-foreground">
                 Extracting receipt data…
@@ -308,21 +498,36 @@ export function ScanModal({
               />
               <p className="text-xs text-muted-foreground text-center">
                 {ocrProgress < 30
-                  ? "Loading OCR engine…"
-                  : ocrProgress < 70
-                    ? "Analyzing text…"
-                    : ocrProgress < 90
-                      ? "Extracting fields…"
-                      : "Almost done…"}
+                  ? "Stitching images…"
+                  : ocrProgress < 50
+                    ? "Loading OCR engine…"
+                    : ocrProgress < 70
+                      ? "Analyzing text…"
+                      : ocrProgress < 90
+                        ? "Extracting fields…"
+                        : "Almost done…"}
               </p>
             </div>
           </div>
         )}
 
-        {/* Step: Review */}
+        {/* ── Step: Review ── */}
         {step === "review" && (
           <div className="flex-1 overflow-y-auto scroll-container">
             <div className="p-5 space-y-5 pb-6">
+              {/* Save to Folder (optional) */}
+              <div className="space-y-2">
+                <Label className="text-sm font-semibold text-foreground/80 uppercase tracking-wide">
+                  Save to Folder (optional)
+                </Label>
+                <FolderSelect
+                  folders={folders}
+                  value={selectedFolderId}
+                  onChange={setSelectedFolderId}
+                  onCreateFolder={createFolder}
+                />
+              </div>
+
               {/* House selector */}
               <div className="space-y-2">
                 <Label className="text-sm font-semibold text-foreground/80 uppercase tracking-wide">

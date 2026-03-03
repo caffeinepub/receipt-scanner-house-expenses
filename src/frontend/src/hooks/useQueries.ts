@@ -9,25 +9,29 @@ export const SHEETS = ["Cabin", "Milton", "Fife", "Tacoma"] as const;
 export type SheetName = (typeof SHEETS)[number];
 
 export const DEFAULT_CATEGORIES = [
-  "Auto",
-  "Cleaning",
-  "Electric",
-  "Garbage",
-  "Gas/Propane",
-  "Groceries",
+  "Advertising",
+  "Association Dues",
+  "Auto and Travel",
+  "Cleaning and Maintenance",
+  "Commissions",
+  "Gardening",
   "Insurance",
-  "Internet",
-  "Landscaping/Yard",
-  "Mortgage/Rent",
+  "Legal and Professional Fees",
+  "Licenses and Permits",
+  "Management Fees",
+  "Miscellaneous",
+  "Mortgage Interest",
+  "Excess Mortgage Interest",
+  "Other Interest (not entered elsewhere)",
+  "Painting and Decorating",
   "Pest Control",
-  "Phone",
-  "Plumbing",
-  "Repairs/Maintenance",
-  "Security",
-  "Taxes",
-  "Trash",
-  "Utilities",
-  "Water/Sewer",
+  "Plumbing and Electrical",
+  "Repairs",
+  "Supplies",
+  "Taxes - Real Estate",
+  "Taxes - Other (not entered elsewhere)",
+  "Telephone",
+  "Wages and Salaries",
   "Other",
 ];
 
@@ -39,7 +43,11 @@ export function useCategories() {
     queryFn: async () => {
       if (!actor) return DEFAULT_CATEGORIES;
       const cats = await actor.getAllCategories();
-      return cats.length > 0 ? cats : DEFAULT_CATEGORIES;
+      // Always use DEFAULT_CATEGORIES as the base list.
+      // Append any user-added custom categories from the backend
+      // that are not already in the default list.
+      const customExtras = cats.filter((c) => !DEFAULT_CATEGORIES.includes(c));
+      return [...DEFAULT_CATEGORIES, ...customExtras];
     },
     enabled: !!actor && !isFetching,
     staleTime: 1000 * 60 * 5,

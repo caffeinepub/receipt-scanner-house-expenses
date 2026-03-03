@@ -8,12 +8,9 @@ import { SHEETS } from "@/hooks/useQueries";
 import { ICON_MAP } from "@/hooks/useSheetConfig";
 import { useSheetConfig } from "@/hooks/useSheetConfig";
 import { cn } from "@/lib/utils";
-import { Camera, ChevronDown, Settings } from "lucide-react";
+import { Camera, Settings } from "lucide-react";
 import type React from "react";
-import { useState } from "react";
-
-const CURRENT_YEAR = new Date().getFullYear();
-const YEAR_OPTIONS = Array.from({ length: 10 }, (_, i) => CURRENT_YEAR - i);
+import { useEffect, useState } from "react";
 
 const HOUSE_COLORS: Record<SheetName, string> = {
   Cabin: "text-emerald-600",
@@ -40,8 +37,20 @@ export default function App() {
   const [activeSheet, setActiveSheet] = useState<SheetName>("Cabin");
   const [scanOpen, setScanOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [selectedYear, setSelectedYear] = useState(CURRENT_YEAR);
+  const [selectedYear, setSelectedYear] = useState<number>(() => {
+    const saved = localStorage.getItem("receiptScanner_selectedYear");
+    if (saved) {
+      const n = Number.parseInt(saved, 10);
+      if (n >= 2000 && n <= 2099) return n;
+    }
+    return 2025;
+  });
+  const [yearInput, setYearInput] = useState<string>(String(selectedYear));
   const { data: categories = [] } = useCategories();
+
+  useEffect(() => {
+    setYearInput(String(selectedYear));
+  }, [selectedYear]);
   const { sheetConfigs, updateSheetConfig } = useSheetConfig();
 
   const activeCfg = sheetConfigs[activeSheet];
@@ -78,22 +87,31 @@ export default function App() {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <div className="relative">
-            <select
-              value={selectedYear}
-              onChange={(e) => setSelectedYear(Number(e.target.value))}
-              className="appearance-none text-xs font-medium text-foreground bg-muted pl-2.5 pr-6 py-1 rounded-full border-0 outline-none cursor-pointer focus:ring-2 focus:ring-primary/30"
-              data-ocid="header.year_select"
-              aria-label="Select tax year"
-            >
-              {YEAR_OPTIONS.map((yr) => (
-                <option key={yr} value={yr}>
-                  {yr}
-                </option>
-              ))}
-            </select>
-            <ChevronDown className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 h-3 w-3 text-muted-foreground" />
-          </div>
+          <input
+            type="text"
+            inputMode="numeric"
+            pattern="[0-9]*"
+            value={yearInput}
+            onChange={(e) => setYearInput(e.target.value)}
+            onBlur={() => {
+              const n = Number.parseInt(yearInput, 10);
+              if (n >= 2000 && n <= 2099) {
+                setSelectedYear(n);
+                localStorage.setItem("receiptScanner_selectedYear", String(n));
+              } else {
+                setYearInput(String(selectedYear));
+              }
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                (e.target as HTMLInputElement).blur();
+              }
+            }}
+            className="text-xs font-medium text-foreground bg-muted px-2.5 py-1 rounded-full border-0 outline-none focus:ring-2 focus:ring-primary/30 w-14 text-center"
+            data-ocid="header.year_input"
+            aria-label="Tax year"
+            maxLength={4}
+          />
           <button
             type="button"
             onClick={() => setSettingsOpen(true)}
