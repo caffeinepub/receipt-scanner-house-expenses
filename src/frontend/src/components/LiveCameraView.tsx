@@ -164,20 +164,6 @@ function drawOverlay(
 ) {
   ctx.clearRect(0, 0, canvasW, canvasH);
 
-  // Dark vignette around edges to help the user focus
-  const gradient = ctx.createRadialGradient(
-    canvasW / 2,
-    canvasH / 2,
-    Math.min(canvasW, canvasH) * 0.3,
-    canvasW / 2,
-    canvasH / 2,
-    Math.max(canvasW, canvasH) * 0.75,
-  );
-  gradient.addColorStop(0, "rgba(0,0,0,0)");
-  gradient.addColorStop(1, "rgba(0,0,0,0.45)");
-  ctx.fillStyle = gradient;
-  ctx.fillRect(0, 0, canvasW, canvasH);
-
   let bx: number;
   let by: number;
   let bw: number;
@@ -192,8 +178,8 @@ function drawOverlay(
     confident = bounds.confident;
   } else {
     // Default guide box — centred receipt shape
-    const marginX = canvasW * 0.1;
-    const marginY = canvasH * 0.15;
+    const marginX = canvasW * 0.08;
+    const marginY = canvasH * 0.12;
     bx = marginX;
     by = marginY;
     bw = canvasW - marginX * 2;
@@ -201,23 +187,41 @@ function drawOverlay(
     confident = false;
   }
 
-  // Dashed border around detected area
+  // ── Spotlight mask ────────────────────────────────────────────────────────
+  // Fill entire canvas with a dark overlay, then punch out the receipt area
+  // using "destination-out" so only that region shows the live video clearly.
+  const radius = 8;
+
+  // 1. Dark mask over everything outside the receipt
+  ctx.globalCompositeOperation = "source-over";
+  ctx.fillStyle = confident ? "rgba(0,0,0,0.65)" : "rgba(0,0,0,0.50)";
+  ctx.fillRect(0, 0, canvasW, canvasH);
+
+  // 2. Cut out the receipt rectangle (with rounded corners)
+  ctx.globalCompositeOperation = "destination-out";
+  ctx.beginPath();
+  ctx.roundRect(bx, by, bw, bh, radius);
+  ctx.fill();
+
+  // Reset composite mode
+  ctx.globalCompositeOperation = "source-over";
+
+  // ── Border around the cutout ──────────────────────────────────────────────
   const borderColor = confident
-    ? "rgba(74, 222, 128, 0.85)" // green-400
-    : "rgba(255, 255, 255, 0.5)";
-  const cornerLen = Math.min(bw, bh) * 0.12;
-  const lineW = confident ? 3 : 2;
+    ? "rgba(74, 222, 128, 0.95)"
+    : "rgba(255, 255, 255, 0.70)";
+  const cornerLen = Math.min(bw, bh) * 0.1;
 
   ctx.strokeStyle = borderColor;
-  ctx.lineWidth = lineW;
   ctx.lineCap = "round";
 
-  // Full dashed border
-  ctx.setLineDash([8, 6]);
-  ctx.strokeRect(bx, by, bw, bh);
+  // Subtle dashed full border to show exact crop boundary
+  ctx.lineWidth = confident ? 2 : 1.5;
+  ctx.setLineDash([6, 5]);
+  ctx.strokeRect(bx + 1, by + 1, bw - 2, bh - 2);
   ctx.setLineDash([]);
 
-  // Solid corner brackets on top of dashes
+  // Bold corner brackets
   ctx.lineWidth = confident ? 4 : 3;
 
   // Top-left
@@ -248,12 +252,13 @@ function drawOverlay(
   ctx.lineTo(bx + bw, by + bh - cornerLen);
   ctx.stroke();
 
-  // Label
+  // Label — place above cutout if space allows, else below
   if (confident) {
     ctx.font = "bold 13px system-ui, sans-serif";
     ctx.fillStyle = "rgba(74, 222, 128, 0.95)";
     ctx.textAlign = "center";
-    ctx.fillText("Receipt detected", bx + bw / 2, by - 10);
+    const labelY = by > 22 ? by - 10 : by + bh + 20;
+    ctx.fillText("Receipt detected — tap to capture", bx + bw / 2, labelY);
   }
 }
 
@@ -465,7 +470,7 @@ export function LiveCameraView({ onCapture, onClose }: LiveCameraViewProps) {
   // ── Fallback UI ──────────────────────────────────────────────────────────
   if (fallbackMode) {
     return (
-      <div className="fixed inset-0 z-50 bg-background flex flex-col items-center justify-center gap-6 px-6">
+      <div className="fixed inset-0 z-[200] bg-background flex flex-col items-center justify-center gap-6 px-6">
         <p className="text-sm text-muted-foreground text-center max-w-xs">
           Live camera preview isn't available in this browser. Tap below to open
           your camera and take a photo of the receipt.
@@ -501,7 +506,7 @@ export function LiveCameraView({ onCapture, onClose }: LiveCameraViewProps) {
   // ── Live viewfinder UI ────────────────────────────────────────────────────
   return (
     <div
-      className="fixed inset-0 z-50 bg-black flex flex-col"
+      className="fixed inset-0 z-[200] bg-black flex flex-col"
       data-ocid="camera.panel"
     >
       {/* Hidden offscreen canvases used only for processing */}

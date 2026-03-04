@@ -23,6 +23,7 @@ import { cropReceipt, stitchImages } from "@/utils/imageProcessing";
 import { type OcrResult, runOcr } from "@/utils/ocr";
 import { AlertCircle, Camera, Receipt, RefreshCw, Save, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { toast } from "sonner";
 import { CategorySelect } from "./CategorySelect";
 import { CompanySelect } from "./CompanySelect";
@@ -130,12 +131,19 @@ export function ScanModal({
     setErrors({});
   }, [defaultSheet, capturedImage]);
 
-  // Auto-open live camera when modal opens
+  // Auto-open live camera when modal opens — we close the sheet first so the
+  // camera renders on top on iOS Safari (video elements render below Sheet overlays).
   useEffect(() => {
     if (open) {
-      setShowCamera(true);
+      // Small delay to let the sheet finish its open animation before we
+      // hide it and show the camera
+      const t = setTimeout(() => setShowCamera(true), 350);
+      return () => clearTimeout(t);
     }
   }, [open]);
+
+  // When the camera is shown, hide the sheet so nothing sits above the viewfinder
+  const sheetVisible = open && !showCamera;
 
   const handleClose = () => {
     resetState();
@@ -356,438 +364,455 @@ export function ScanModal({
       : "bg-amber-500/20 text-amber-700";
 
   return (
-    <Sheet open={open} onOpenChange={(o) => !o && handleClose()}>
-      <SheetContent
-        side="bottom"
-        className="h-[95dvh] rounded-t-2xl p-0 flex flex-col overflow-hidden"
+    <>
+      <Sheet
+        open={sheetVisible}
+        onOpenChange={(o) => !o && !showCamera && handleClose()}
       >
-        <SheetHeader className="px-5 pt-5 pb-3 border-b border-border shrink-0">
-          <div className="flex items-center justify-between">
-            <SheetTitle className="font-display text-xl font-bold">
-              {step === "capture" && "Scan Receipt"}
-              {step === "processing" && "Reading Receipt…"}
-              {step === "review" && "Review & Save"}
-            </SheetTitle>
-            {step === "review" && ocrResult && (
-              <Badge className={cn("text-xs font-medium", confidenceColor)}>
-                {Math.round(ocrResult.confidence)}% confidence
-              </Badge>
-            )}
-          </div>
-          {/* Step indicator */}
-          <div className="flex gap-2 mt-2">
-            {(["capture", "processing", "review"] as ScanStep[]).map((s, i) => (
-              <div
-                key={s}
-                className={cn(
-                  "h-1 flex-1 rounded-full transition-colors",
-                  i === 0 && step !== "capture"
-                    ? "bg-primary"
-                    : i === 1 && step === "review"
-                      ? "bg-primary"
-                      : i === ["capture", "processing", "review"].indexOf(step)
-                        ? "bg-primary/50"
-                        : "bg-muted",
-                )}
-              />
-            ))}
-          </div>
-        </SheetHeader>
-
-        {/* Hidden camera input */}
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="image/*"
-          capture="environment"
-          onChange={handleFileCapture}
-          className="hidden"
-        />
-
-        {/* ── Step: Capture ── */}
-        {step === "capture" && (
-          <div className="flex-1 flex flex-col overflow-hidden">
-            {/* Thumbnail strip of already-captured scans */}
-            {scannedPreviews.length > 0 ? (
-              <div className="flex-1 overflow-y-auto px-4 pt-4 pb-2 space-y-2">
-                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                  Captured scans ({scannedPreviews.length})
-                </p>
-                <div className="space-y-2">
-                  {scannedPreviews.map((url, index) => (
-                    <div
-                      key={url}
-                      className="relative rounded-xl overflow-hidden border border-border bg-muted/20"
-                      style={{ height: "120px" }}
-                    >
-                      <img
-                        src={url}
-                        alt={`Scan ${index + 1}`}
-                        className="w-full h-full object-cover"
-                      />
-                      <div className="absolute inset-0 bg-gradient-to-t from-black/20 to-transparent pointer-events-none" />
-                      <span className="absolute bottom-2 left-3 text-white text-xs font-semibold drop-shadow">
-                        Part {index + 1}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => handleRemoveScan(index)}
-                        className="absolute top-2 right-2 w-7 h-7 rounded-full bg-black/60 hover:bg-black/80 flex items-center justify-center transition-colors"
-                        aria-label={`Remove scan ${index + 1}`}
-                        data-ocid={`scan.thumbnail_remove.${index + 1}`}
-                      >
-                        <X className="h-3.5 w-3.5 text-white" />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-
-                <p className="text-xs text-muted-foreground text-center pt-1">
-                  Scans will be stitched top-to-bottom
-                </p>
-              </div>
-            ) : (
-              /* Empty state — show receipt viewfinder placeholder */
-              <div className="flex-1 flex flex-col items-center justify-center px-6 gap-4">
-                <div className="w-full max-w-xs aspect-[3/4] rounded-2xl border-2 border-dashed border-border bg-muted/40 flex flex-col items-center justify-center gap-4 relative overflow-hidden">
-                  <div className="absolute inset-0 opacity-5">
-                    <div className="absolute top-1/4 left-0 right-0 h-px bg-foreground" />
-                    <div className="absolute top-3/4 left-0 right-0 h-px bg-foreground" />
-                    <div className="absolute top-0 bottom-0 left-1/4 w-px bg-foreground" />
-                    <div className="absolute top-0 bottom-0 left-3/4 w-px bg-foreground" />
-                  </div>
-                  {/* Corner guides */}
-                  {(
-                    [
-                      "top-3 left-3",
-                      "top-3 right-3",
-                      "bottom-3 left-3",
-                      "bottom-3 right-3",
-                    ] as const
-                  ).map((pos) => (
-                    <div
-                      key={pos}
-                      className={cn(
-                        "absolute w-6 h-6 border-primary",
-                        `${pos.includes("top") ? "border-t-2" : "border-b-2"} ${pos.includes("left") ? "border-l-2" : "border-r-2"}`,
-                        pos,
-                      )}
-                    />
-                  ))}
-                  <Receipt className="h-16 w-16 text-muted-foreground/40" />
-                  <p className="text-sm text-muted-foreground text-center px-4">
-                    Camera will open automatically
-                  </p>
-                </div>
-                <p className="text-xs text-muted-foreground text-center max-w-xs">
-                  Scan the top half first, then tap "Add another scan" for long
-                  receipts
-                </p>
-              </div>
-            )}
-
-            {/* Bottom actions */}
-            <div className="px-4 pb-6 pt-3 space-y-2.5 shrink-0 border-t border-border/50">
-              <Button
-                variant="outline"
-                className="w-full h-12 gap-2 font-medium"
-                onClick={() => setShowCamera(true)}
-                data-ocid="scan.add_another_button"
-              >
-                <Camera className="h-4 w-4" />
-                {scannedPreviews.length === 0
-                  ? "Open Camera"
-                  : "Add another scan"}
-              </Button>
-              <Button
-                className="w-full h-12 gap-2 font-semibold"
-                disabled={scannedBlobs.length === 0}
-                onClick={handleContinueToReview}
-                data-ocid="scan.continue_button"
-              >
-                Continue to Review
-              </Button>
+        <SheetContent
+          side="bottom"
+          className="h-[95dvh] rounded-t-2xl p-0 flex flex-col overflow-hidden"
+        >
+          <SheetHeader className="px-5 pt-5 pb-3 border-b border-border shrink-0">
+            <div className="flex items-center justify-between">
+              <SheetTitle className="font-display text-xl font-bold">
+                {step === "capture" && "Scan Receipt"}
+                {step === "processing" && "Reading Receipt…"}
+                {step === "review" && "Review & Save"}
+              </SheetTitle>
+              {step === "review" && ocrResult && (
+                <Badge className={cn("text-xs font-medium", confidenceColor)}>
+                  {Math.round(ocrResult.confidence)}% confidence
+                </Badge>
+              )}
             </div>
-          </div>
-        )}
-
-        {/* ── Step: Processing ── */}
-        {step === "processing" && (
-          <div className="flex-1 flex flex-col items-center p-6 gap-6 overflow-y-auto">
-            {/* Thumbnail strip of captured scans */}
-            {scannedPreviews.length > 0 && (
-              <div className="w-full space-y-2">
-                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                  {scannedPreviews.length} scan
-                  {scannedPreviews.length !== 1 ? "s" : ""} — stitching…
-                </p>
-                <div className="flex gap-2 overflow-x-auto pb-1">
-                  {scannedPreviews.map((url, i) => (
-                    <div
-                      key={url}
-                      className="shrink-0 w-20 h-20 rounded-xl overflow-hidden border border-border"
-                    >
-                      <img
-                        src={url}
-                        alt={`Scan part ${i + 1}`}
-                        className="w-full h-full object-cover"
-                      />
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {capturedImage && (
-              <div className="w-full max-w-xs aspect-[3/4] rounded-2xl overflow-hidden border border-border">
-                <img
-                  src={capturedImage}
-                  alt="Stitched receipt"
-                  className="w-full h-full object-contain"
-                />
-              </div>
-            )}
-
-            <div className="w-full max-w-xs space-y-3">
-              <p className="text-sm font-medium text-center text-foreground">
-                Extracting receipt data…
-              </p>
-              <Progress
-                value={ocrProgress}
-                className="h-2"
-                data-ocid="scan.loading_state"
-              />
-              <p className="text-xs text-muted-foreground text-center">
-                {ocrProgress < 30
-                  ? "Stitching images…"
-                  : ocrProgress < 50
-                    ? "Loading OCR engine…"
-                    : ocrProgress < 70
-                      ? "Analyzing text…"
-                      : ocrProgress < 90
-                        ? "Extracting fields…"
-                        : "Almost done…"}
-              </p>
-            </div>
-          </div>
-        )}
-
-        {/* ── Step: Review ── */}
-        {step === "review" && (
-          <div className="flex-1 overflow-y-auto scroll-container">
-            <div className="p-5 space-y-5 pb-6">
-              {/* Save to Folder (optional) */}
-              <div className="space-y-2">
-                <Label className="text-sm font-semibold text-foreground/80 uppercase tracking-wide">
-                  Save to Folder (optional)
-                </Label>
-                <FolderSelect
-                  folders={folders}
-                  value={selectedFolderId}
-                  onChange={setSelectedFolderId}
-                  onCreateFolder={createFolder}
-                />
-              </div>
-
-              {/* House selector */}
-              <div className="space-y-2">
-                <Label className="text-sm font-semibold text-foreground/80 uppercase tracking-wide">
-                  House *
-                </Label>
-                <div
-                  className="grid grid-cols-2 gap-2"
-                  data-ocid="scan.sheet_select"
-                >
-                  {SHEETS.map((s) => {
-                    const cfg = sheetConfigs?.[s];
-                    const label = cfg?.label ?? s;
-                    const IconComp = cfg ? ICON_MAP[cfg.icon] : null;
-                    return (
-                      <button
-                        key={s}
-                        type="button"
-                        onClick={() =>
-                          setForm((prev) => ({ ...prev, sheet: s }))
-                        }
-                        className={cn(
-                          "py-3 px-2 rounded-xl text-sm font-medium transition-all border tap-highlight-none flex flex-col items-center gap-1",
-                          form.sheet === s
-                            ? "bg-primary text-primary-foreground border-primary shadow-sm"
-                            : "bg-card border-border text-muted-foreground hover:border-primary/50",
-                        )}
-                      >
-                        {IconComp && (
-                          <IconComp
-                            className={cn(
-                              "h-4 w-4",
-                              form.sheet === s
-                                ? "text-primary-foreground"
-                                : "text-muted-foreground",
-                            )}
-                          />
-                        )}
-                        <span className="truncate w-full text-center">
-                          {label}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-                {errors.sheet && (
-                  <p className="text-xs text-destructive flex items-center gap-1">
-                    <AlertCircle className="h-3 w-3" />
-                    {errors.sheet}
-                  </p>
-                )}
-              </div>
-
-              {/* Date */}
-              <div className="space-y-2">
-                <Label className="text-sm font-semibold text-foreground/80 uppercase tracking-wide">
-                  Date *
-                </Label>
-                <Input
-                  type="date"
-                  value={form.date}
-                  onChange={(e) =>
-                    setForm((prev) => ({ ...prev, date: e.target.value }))
-                  }
-                  className="h-12 bg-card"
-                  data-ocid="scan.date_input"
-                />
-                {errors.date && (
-                  <p className="text-xs text-destructive">{errors.date}</p>
-                )}
-              </div>
-
-              {/* Company */}
-              <div className="space-y-2">
-                <Label className="text-sm font-semibold text-foreground/80 uppercase tracking-wide">
-                  Company *
-                </Label>
-                <CompanySelect
-                  value={form.companyName}
-                  onChange={(v) =>
-                    setForm((prev) => ({ ...prev, companyName: v }))
-                  }
-                  existingCompanies={existingCompanies}
-                  ocrConfidence={ocrResult?.confidence}
-                />
-                {errors.companyName && (
-                  <p className="text-xs text-destructive">
-                    {errors.companyName}
-                  </p>
-                )}
-              </div>
-
-              {/* Category */}
-              <div className="space-y-2">
-                <Label className="text-sm font-semibold text-foreground/80 uppercase tracking-wide">
-                  Category *
-                </Label>
-                <CategorySelect
-                  categories={categories}
-                  value={form.category}
-                  onChange={(v) =>
-                    setForm((prev) => ({ ...prev, category: v }))
-                  }
-                />
-                {errors.category && (
-                  <p className="text-xs text-destructive">{errors.category}</p>
-                )}
-              </div>
-
-              {/* Amount */}
-              <div className="space-y-2">
-                <Label className="text-sm font-semibold text-foreground/80 uppercase tracking-wide">
-                  Total Amount *
-                </Label>
-                <div className="relative">
-                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground font-medium">
-                    $
-                  </span>
-                  <Input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    value={form.amount}
-                    onChange={(e) =>
-                      setForm((prev) => ({ ...prev, amount: e.target.value }))
-                    }
-                    placeholder="0.00"
-                    className="h-12 pl-8 bg-card"
-                    data-ocid="scan.amount_input"
+            {/* Step indicator */}
+            <div className="flex gap-2 mt-2">
+              {(["capture", "processing", "review"] as ScanStep[]).map(
+                (s, i) => (
+                  <div
+                    key={s}
+                    className={cn(
+                      "h-1 flex-1 rounded-full transition-colors",
+                      i === 0 && step !== "capture"
+                        ? "bg-primary"
+                        : i === 1 && step === "review"
+                          ? "bg-primary"
+                          : i ===
+                              ["capture", "processing", "review"].indexOf(step)
+                            ? "bg-primary/50"
+                            : "bg-muted",
+                    )}
                   />
+                ),
+              )}
+            </div>
+          </SheetHeader>
+
+          {/* Hidden camera input */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            capture="environment"
+            onChange={handleFileCapture}
+            className="hidden"
+          />
+
+          {/* ── Step: Capture ── */}
+          {step === "capture" && (
+            <div className="flex-1 flex flex-col overflow-hidden">
+              {/* Thumbnail strip of already-captured scans */}
+              {scannedPreviews.length > 0 ? (
+                <div className="flex-1 overflow-y-auto px-4 pt-4 pb-2 space-y-2">
+                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                    Captured scans ({scannedPreviews.length})
+                  </p>
+                  <div className="space-y-2">
+                    {scannedPreviews.map((url, index) => (
+                      <div
+                        key={url}
+                        className="relative rounded-xl overflow-hidden border border-border bg-muted/20"
+                        style={{ height: "120px" }}
+                      >
+                        <img
+                          src={url}
+                          alt={`Scan ${index + 1}`}
+                          className="w-full h-full object-cover"
+                        />
+                        <div className="absolute inset-0 bg-gradient-to-t from-black/20 to-transparent pointer-events-none" />
+                        <span className="absolute bottom-2 left-3 text-white text-xs font-semibold drop-shadow">
+                          Part {index + 1}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveScan(index)}
+                          className="absolute top-2 right-2 w-7 h-7 rounded-full bg-black/60 hover:bg-black/80 flex items-center justify-center transition-colors"
+                          aria-label={`Remove scan ${index + 1}`}
+                          data-ocid={`scan.thumbnail_remove.${index + 1}`}
+                        >
+                          <X className="h-3.5 w-3.5 text-white" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+
+                  <p className="text-xs text-muted-foreground text-center pt-1">
+                    Scans will be stitched top-to-bottom
+                  </p>
                 </div>
-                {errors.amount && (
-                  <p className="text-xs text-destructive">{errors.amount}</p>
-                )}
-              </div>
+              ) : (
+                /* Empty state — show receipt viewfinder placeholder */
+                <div className="flex-1 flex flex-col items-center justify-center px-6 gap-4">
+                  <div className="w-full max-w-xs aspect-[3/4] rounded-2xl border-2 border-dashed border-border bg-muted/40 flex flex-col items-center justify-center gap-4 relative overflow-hidden">
+                    <div className="absolute inset-0 opacity-5">
+                      <div className="absolute top-1/4 left-0 right-0 h-px bg-foreground" />
+                      <div className="absolute top-3/4 left-0 right-0 h-px bg-foreground" />
+                      <div className="absolute top-0 bottom-0 left-1/4 w-px bg-foreground" />
+                      <div className="absolute top-0 bottom-0 left-3/4 w-px bg-foreground" />
+                    </div>
+                    {/* Corner guides */}
+                    {(
+                      [
+                        "top-3 left-3",
+                        "top-3 right-3",
+                        "bottom-3 left-3",
+                        "bottom-3 right-3",
+                      ] as const
+                    ).map((pos) => (
+                      <div
+                        key={pos}
+                        className={cn(
+                          "absolute w-6 h-6 border-primary",
+                          `${pos.includes("top") ? "border-t-2" : "border-b-2"} ${pos.includes("left") ? "border-l-2" : "border-r-2"}`,
+                          pos,
+                        )}
+                      />
+                    ))}
+                    <Receipt className="h-16 w-16 text-muted-foreground/40" />
+                    <p className="text-sm text-muted-foreground text-center px-4">
+                      Camera will open automatically
+                    </p>
+                  </div>
+                  <p className="text-xs text-muted-foreground text-center max-w-xs">
+                    Scan the top half first, then tap "Add another scan" for
+                    long receipts
+                  </p>
+                </div>
+              )}
 
-              {/* Notes */}
-              <div className="space-y-2">
-                <Label className="text-sm font-semibold text-foreground/80 uppercase tracking-wide">
-                  Notes
-                </Label>
-                <Textarea
-                  value={form.notes}
-                  onChange={(e) =>
-                    setForm((prev) => ({ ...prev, notes: e.target.value }))
-                  }
-                  placeholder="Optional notes about this receipt…"
-                  className="min-h-[80px] bg-card resize-none"
-                  data-ocid="scan.notes_textarea"
-                />
-              </div>
-
-              {/* Actions */}
-              <div className="grid grid-cols-2 gap-3 pt-2">
+              {/* Bottom actions */}
+              <div className="px-4 pb-6 pt-3 space-y-2.5 shrink-0 border-t border-border/50">
                 <Button
                   variant="outline"
-                  className="h-12 gap-2"
-                  onClick={handleRescan}
-                  data-ocid="scan.rescan_button"
+                  className="w-full h-12 gap-2 font-medium"
+                  onClick={() => setShowCamera(true)}
+                  data-ocid="scan.add_another_button"
                 >
-                  <RefreshCw className="h-4 w-4" />
-                  Rescan
+                  <Camera className="h-4 w-4" />
+                  {scannedPreviews.length === 0
+                    ? "Open Camera"
+                    : "Add another scan"}
                 </Button>
                 <Button
-                  className="h-12 gap-2 font-semibold"
-                  onClick={handleSave}
-                  disabled={addEntry.isPending || actorFetching}
-                  data-ocid="scan.save_button"
+                  className="w-full h-12 gap-2 font-semibold"
+                  disabled={scannedBlobs.length === 0}
+                  onClick={handleContinueToReview}
+                  data-ocid="scan.continue_button"
                 >
-                  {addEntry.isPending || actorFetching ? (
-                    <>
-                      <span className="h-4 w-4 rounded-full border-2 border-primary-foreground/30 border-t-primary-foreground animate-spin" />
-                      {actorFetching ? "Connecting…" : "Saving…"}
-                    </>
-                  ) : (
-                    <>
-                      <Save className="h-4 w-4" />
-                      Save Entry
-                    </>
-                  )}
+                  Continue to Review
                 </Button>
               </div>
             </div>
-          </div>
-        )}
-      </SheetContent>
+          )}
 
-      {/* Live camera viewfinder — renders as fixed overlay above the sheet */}
-      {showCamera && (
-        <LiveCameraView
-          onCapture={handleLiveCapture}
-          onClose={() => {
-            setShowCamera(false);
-            // If user cancels before any scan, close the whole modal
-            if (scannedBlobs.length === 0) {
-              handleClose();
-            }
-          }}
-        />
-      )}
-    </Sheet>
+          {/* ── Step: Processing ── */}
+          {step === "processing" && (
+            <div className="flex-1 flex flex-col items-center p-6 gap-6 overflow-y-auto">
+              {/* Thumbnail strip of captured scans */}
+              {scannedPreviews.length > 0 && (
+                <div className="w-full space-y-2">
+                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                    {scannedPreviews.length} scan
+                    {scannedPreviews.length !== 1 ? "s" : ""} — stitching…
+                  </p>
+                  <div className="flex gap-2 overflow-x-auto pb-1">
+                    {scannedPreviews.map((url, i) => (
+                      <div
+                        key={url}
+                        className="shrink-0 w-20 h-20 rounded-xl overflow-hidden border border-border"
+                      >
+                        <img
+                          src={url}
+                          alt={`Scan part ${i + 1}`}
+                          className="w-full h-full object-cover"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {capturedImage && (
+                <div className="w-full max-w-xs aspect-[3/4] rounded-2xl overflow-hidden border border-border">
+                  <img
+                    src={capturedImage}
+                    alt="Stitched receipt"
+                    className="w-full h-full object-contain"
+                  />
+                </div>
+              )}
+
+              <div className="w-full max-w-xs space-y-3">
+                <p className="text-sm font-medium text-center text-foreground">
+                  Extracting receipt data…
+                </p>
+                <Progress
+                  value={ocrProgress}
+                  className="h-2"
+                  data-ocid="scan.loading_state"
+                />
+                <p className="text-xs text-muted-foreground text-center">
+                  {ocrProgress < 30
+                    ? "Stitching images…"
+                    : ocrProgress < 50
+                      ? "Loading OCR engine…"
+                      : ocrProgress < 70
+                        ? "Analyzing text…"
+                        : ocrProgress < 90
+                          ? "Extracting fields…"
+                          : "Almost done…"}
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* ── Step: Review ── */}
+          {step === "review" && (
+            <div className="flex-1 overflow-y-auto scroll-container">
+              <div className="p-5 space-y-5 pb-6">
+                {/* Save to Folder (optional) */}
+                <div className="space-y-2">
+                  <Label className="text-sm font-semibold text-foreground/80 uppercase tracking-wide">
+                    Save to Folder (optional)
+                  </Label>
+                  <FolderSelect
+                    folders={folders}
+                    value={selectedFolderId}
+                    onChange={setSelectedFolderId}
+                    onCreateFolder={createFolder}
+                  />
+                </div>
+
+                {/* House selector */}
+                <div className="space-y-2">
+                  <Label className="text-sm font-semibold text-foreground/80 uppercase tracking-wide">
+                    House *
+                  </Label>
+                  <div
+                    className="grid grid-cols-2 gap-2"
+                    data-ocid="scan.sheet_select"
+                  >
+                    {SHEETS.map((s) => {
+                      const cfg = sheetConfigs?.[s];
+                      const label = cfg?.label ?? s;
+                      const IconComp = cfg ? ICON_MAP[cfg.icon] : null;
+                      return (
+                        <button
+                          key={s}
+                          type="button"
+                          onClick={() =>
+                            setForm((prev) => ({ ...prev, sheet: s }))
+                          }
+                          className={cn(
+                            "py-3 px-2 rounded-xl text-sm font-medium transition-all border tap-highlight-none flex flex-col items-center gap-1",
+                            form.sheet === s
+                              ? "bg-primary text-primary-foreground border-primary shadow-sm"
+                              : "bg-card border-border text-muted-foreground hover:border-primary/50",
+                          )}
+                        >
+                          {IconComp && (
+                            <IconComp
+                              className={cn(
+                                "h-4 w-4",
+                                form.sheet === s
+                                  ? "text-primary-foreground"
+                                  : "text-muted-foreground",
+                              )}
+                            />
+                          )}
+                          <span className="truncate w-full text-center">
+                            {label}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {errors.sheet && (
+                    <p className="text-xs text-destructive flex items-center gap-1">
+                      <AlertCircle className="h-3 w-3" />
+                      {errors.sheet}
+                    </p>
+                  )}
+                </div>
+
+                {/* Date */}
+                <div className="space-y-2">
+                  <Label className="text-sm font-semibold text-foreground/80 uppercase tracking-wide">
+                    Date *
+                  </Label>
+                  <Input
+                    type="date"
+                    value={form.date}
+                    onChange={(e) =>
+                      setForm((prev) => ({ ...prev, date: e.target.value }))
+                    }
+                    className="h-12 bg-card"
+                    data-ocid="scan.date_input"
+                  />
+                  {errors.date && (
+                    <p className="text-xs text-destructive">{errors.date}</p>
+                  )}
+                </div>
+
+                {/* Company */}
+                <div className="space-y-2">
+                  <Label className="text-sm font-semibold text-foreground/80 uppercase tracking-wide">
+                    Company *
+                  </Label>
+                  <CompanySelect
+                    value={form.companyName}
+                    onChange={(v) =>
+                      setForm((prev) => ({ ...prev, companyName: v }))
+                    }
+                    existingCompanies={existingCompanies}
+                    ocrConfidence={ocrResult?.confidence}
+                  />
+                  {errors.companyName && (
+                    <p className="text-xs text-destructive">
+                      {errors.companyName}
+                    </p>
+                  )}
+                </div>
+
+                {/* Category */}
+                <div className="space-y-2">
+                  <Label className="text-sm font-semibold text-foreground/80 uppercase tracking-wide">
+                    Category *
+                  </Label>
+                  <CategorySelect
+                    categories={categories}
+                    value={form.category}
+                    onChange={(v) =>
+                      setForm((prev) => ({ ...prev, category: v }))
+                    }
+                  />
+                  {errors.category && (
+                    <p className="text-xs text-destructive">
+                      {errors.category}
+                    </p>
+                  )}
+                </div>
+
+                {/* Amount */}
+                <div className="space-y-2">
+                  <Label className="text-sm font-semibold text-foreground/80 uppercase tracking-wide">
+                    Total Amount *
+                  </Label>
+                  <div className="relative">
+                    <span className="absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground font-medium">
+                      $
+                    </span>
+                    <Input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={form.amount}
+                      onChange={(e) =>
+                        setForm((prev) => ({ ...prev, amount: e.target.value }))
+                      }
+                      placeholder="0.00"
+                      className="h-12 pl-8 bg-card"
+                      data-ocid="scan.amount_input"
+                    />
+                  </div>
+                  {errors.amount && (
+                    <p className="text-xs text-destructive">{errors.amount}</p>
+                  )}
+                </div>
+
+                {/* Notes */}
+                <div className="space-y-2">
+                  <Label className="text-sm font-semibold text-foreground/80 uppercase tracking-wide">
+                    Notes
+                  </Label>
+                  <Textarea
+                    value={form.notes}
+                    onChange={(e) =>
+                      setForm((prev) => ({ ...prev, notes: e.target.value }))
+                    }
+                    placeholder="Optional notes about this receipt…"
+                    className="min-h-[80px] bg-card resize-none"
+                    data-ocid="scan.notes_textarea"
+                  />
+                </div>
+
+                {/* Actions */}
+                <div className="grid grid-cols-2 gap-3 pt-2">
+                  <Button
+                    variant="outline"
+                    className="h-12 gap-2"
+                    onClick={handleRescan}
+                    data-ocid="scan.rescan_button"
+                  >
+                    <RefreshCw className="h-4 w-4" />
+                    Rescan
+                  </Button>
+                  <Button
+                    className="h-12 gap-2 font-semibold"
+                    onClick={handleSave}
+                    disabled={addEntry.isPending || actorFetching}
+                    data-ocid="scan.save_button"
+                  >
+                    {addEntry.isPending || actorFetching ? (
+                      <>
+                        <span className="h-4 w-4 rounded-full border-2 border-primary-foreground/30 border-t-primary-foreground animate-spin" />
+                        {actorFetching ? "Connecting…" : "Saving…"}
+                      </>
+                    ) : (
+                      <>
+                        <Save className="h-4 w-4" />
+                        Save Entry
+                      </>
+                    )}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          )}
+        </SheetContent>
+      </Sheet>
+
+      {/* Live camera viewfinder — portalled directly to document.body so it
+        always renders LAST in the DOM, above every Radix UI portal overlay.
+        z-[200] ensures it paints over the Sheet's z-50 backdrop on iOS. */}
+      {showCamera &&
+        createPortal(
+          <LiveCameraView
+            onCapture={handleLiveCapture}
+            onClose={() => {
+              setShowCamera(false);
+              // If user cancels before capturing anything, close the whole modal.
+              // Otherwise go back to the sheet (showCamera=false makes sheetVisible=true).
+              if (scannedBlobs.length === 0) {
+                handleClose();
+              }
+              // When scannedBlobs.length > 0, setting showCamera=false is enough —
+              // the sheet will reappear automatically.
+            }}
+          />,
+          document.body,
+        )}
+    </>
   );
 }
