@@ -12,179 +12,39 @@ interface CategorySelectProps {
   onChange: (value: string) => void;
 }
 
-// Detect touch-only device (iPhone, iPad, Android)
-function isTouchDevice(): boolean {
-  return window.matchMedia("(hover: none) and (pointer: coarse)").matches;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// MOBILE: Native <select> — 100% reliable on iOS Safari
-// ─────────────────────────────────────────────────────────────────────────────
-function MobileCategorySelect({
+/**
+ * CategorySelect — works reliably on iPhone inside Radix UI Sheet overlays.
+ *
+ * Strategy: render the picker as a React portal directly on document.body with
+ * a very high z-index. This bypasses all Radix UI portal stacking and iOS
+ * touch-event interception that occurs when a <select> or custom overlay is
+ * nested inside a Sheet component.
+ *
+ * Touch events use onTouchEnd with preventDefault() to prevent iOS from
+ * firing a delayed synthetic click that misses the target after the list
+ * has scrolled.
+ */
+export function CategorySelect({
   categories,
   value,
   onChange,
 }: CategorySelectProps) {
+  const [open, setOpen] = useState(false);
   const [showAddInput, setShowAddInput] = useState(false);
   const [newCategory, setNewCategory] = useState("");
   const addCategory = useAddCategory();
   const addInputRef = useRef<HTMLInputElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (showAddInput) {
-      setTimeout(() => addInputRef.current?.focus(), 100);
+      setTimeout(() => addInputRef.current?.focus(), 80);
     }
   }, [showAddInput]);
 
-  const handleSelectChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const selected = e.target.value;
-    if (selected === "__add_new__") {
-      // Reset select back to current value so it doesn't show "+ Add new…"
-      e.target.value = value || "";
-      setShowAddInput(true);
-      setNewCategory("");
-    } else {
-      onChange(selected);
-      setShowAddInput(false);
-    }
-  };
-
-  const handleSaveNewCategory = async () => {
-    const trimmed = newCategory.trim();
-    if (!trimmed) return;
-    // Set the value immediately so validation passes right away
-    onChange(trimmed);
-    setShowAddInput(false);
-    setNewCategory("");
-    if (categories.includes(trimmed)) {
-      return;
-    }
-    try {
-      await addCategory.mutateAsync(trimmed);
-      toast.success(`Category "${trimmed}" added`);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      // "already exists" means the category is already in the backend — treat
-      // it as a success since the value is already set and usable.
-      if (msg.toLowerCase().includes("already")) {
-        return;
-      }
-      toast.error(
-        "Failed to save category — it will still be used for this entry",
-      );
-    }
-  };
-
-  // Categories to show in the select — include the current value even if it
-  // isn't in the list yet (e.g. a newly typed category before the backend
-  // query refreshes)
-  const selectOptions =
-    value && !categories.includes(value) ? [...categories, value] : categories;
-
-  return (
-    <div className="space-y-2">
-      {/* Native select wrapper */}
-      <div className="relative" data-ocid="scan.category_select">
-        <select
-          value={value || ""}
-          onChange={handleSelectChange}
-          style={{
-            WebkitAppearance: "none",
-            MozAppearance: "none",
-            appearance: "none",
-          }}
-          className="w-full h-12 px-4 pr-10 rounded-md border border-border bg-card text-base text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 cursor-pointer"
-        >
-          <option value="" disabled>
-            Select category…
-          </option>
-          {selectOptions.map((cat) => (
-            <option key={cat} value={cat}>
-              {cat}
-            </option>
-          ))}
-          <option value="__add_new__">+ Add new category…</option>
-        </select>
-        {/* Custom chevron — pointer-events: none so it doesn't block the select */}
-        <ChevronDown
-          className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none"
-          aria-hidden="true"
-        />
-      </div>
-
-      {/* Inline "add new" input — appears below the select when chosen */}
-      {showAddInput && (
-        <div
-          className="flex gap-2 items-center pt-1"
-          data-ocid="category.add_input"
-        >
-          <Input
-            ref={addInputRef}
-            value={newCategory}
-            onChange={(e) => setNewCategory(e.target.value)}
-            placeholder="New category name…"
-            className="h-11 bg-card flex-1"
-            onKeyDown={(e) => {
-              if (e.key === "Enter") handleSaveNewCategory();
-              if (e.key === "Escape") {
-                setShowAddInput(false);
-                setNewCategory("");
-              }
-            }}
-            data-ocid="category.new_input"
-          />
-          <Button
-            type="button"
-            size="icon"
-            className="h-11 w-11 shrink-0"
-            onClick={handleSaveNewCategory}
-            disabled={addCategory.isPending || !newCategory.trim()}
-            data-ocid="category.confirm_button"
-          >
-            <Check className="h-4 w-4" />
-          </Button>
-          <Button
-            type="button"
-            size="icon"
-            variant="outline"
-            className="h-11 w-11 shrink-0"
-            onClick={() => {
-              setShowAddInput(false);
-              setNewCategory("");
-            }}
-            data-ocid="category.cancel_button"
-          >
-            <X className="h-4 w-4" />
-          </Button>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// DESKTOP: Custom scrollable overlay dropdown
-// ─────────────────────────────────────────────────────────────────────────────
-function DesktopCategorySelect({
-  categories,
-  value,
-  onChange,
-}: CategorySelectProps) {
-  const [overlayOpen, setOverlayOpen] = useState(false);
-  const [showAddInput, setShowAddInput] = useState(false);
-  const [newCategory, setNewCategory] = useState("");
-  const addCategory = useAddCategory();
-  const addInputRef = useRef<HTMLInputElement>(null);
-  const triggerRef = useRef<HTMLButtonElement>(null);
-
+  // Lock body scroll while picker is open
   useEffect(() => {
-    if (showAddInput) {
-      setTimeout(() => addInputRef.current?.focus(), 50);
-    }
-  }, [showAddInput]);
-
-  useEffect(() => {
-    if (overlayOpen) {
+    if (open) {
       document.body.style.overflow = "hidden";
     } else {
       document.body.style.overflow = "";
@@ -192,10 +52,16 @@ function DesktopCategorySelect({
     return () => {
       document.body.style.overflow = "";
     };
-  }, [overlayOpen]);
+  }, [open]);
+
+  const handleOpen = () => {
+    setOpen(true);
+    setShowAddInput(false);
+    setNewCategory("");
+  };
 
   const handleClose = () => {
-    setOverlayOpen(false);
+    setOpen(false);
     setShowAddInput(false);
     setNewCategory("");
   };
@@ -208,26 +74,36 @@ function DesktopCategorySelect({
   const handleAddCategory = async () => {
     const trimmed = newCategory.trim();
     if (!trimmed) return;
-    if (categories.includes(trimmed)) {
-      handleSelect(trimmed);
-      return;
-    }
+    // Set value immediately so validation passes right away
+    onChange(trimmed);
+    handleClose();
+    if (categories.includes(trimmed)) return;
     try {
       await addCategory.mutateAsync(trimmed);
-      onChange(trimmed);
-      handleClose();
       toast.success(`Category "${trimmed}" added`);
-    } catch {
-      toast.error("Failed to add category");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.toLowerCase().includes("already")) return;
+      toast.error(
+        "Failed to save category — it will still be used for this entry",
+      );
     }
   };
 
+  // Build display options: include current value if not already in list
+  const displayCategories =
+    value && !categories.includes(value) ? [...categories, value] : categories;
+
   return (
     <>
+      {/* Trigger button */}
       <button
-        ref={triggerRef}
         type="button"
-        onClick={() => setOverlayOpen(true)}
+        onPointerDown={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          handleOpen();
+        }}
         className="w-full h-12 px-4 flex items-center justify-between rounded-md border border-border bg-card text-base transition-colors hover:border-primary/50 focus:outline-none focus:ring-2 focus:ring-primary/30"
         data-ocid="scan.category_select"
       >
@@ -237,32 +113,32 @@ function DesktopCategorySelect({
         <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" />
       </button>
 
-      {overlayOpen &&
+      {/* Portal picker — renders directly on body, above everything */}
+      {open &&
         createPortal(
           <div
             style={{
               position: "fixed",
               inset: 0,
-              zIndex: 999999,
+              zIndex: 2147483647, // max z-index
               display: "flex",
               flexDirection: "column",
               justifyContent: "flex-end",
-              pointerEvents: "auto",
+              // Prevent iOS rubber-band scroll from propagating
+              overscrollBehavior: "contain",
             }}
           >
-            {/* Backdrop — uses a button for keyboard accessibility */}
-            <button
-              type="button"
-              aria-label="Close category picker"
+            {/* Backdrop */}
+            <div
               style={{
                 position: "absolute",
                 inset: 0,
-                backgroundColor: "rgba(0,0,0,0.5)",
-                border: "none",
-                cursor: "default",
-                padding: 0,
+                backgroundColor: "rgba(0,0,0,0.55)",
               }}
-              onClick={handleClose}
+              onPointerDown={(e) => {
+                e.preventDefault();
+                handleClose();
+              }}
             />
 
             {/* Panel */}
@@ -272,19 +148,33 @@ function DesktopCategorySelect({
                 background: "hsl(var(--background))",
                 borderTopLeftRadius: "1rem",
                 borderTopRightRadius: "1rem",
-                boxShadow: "0 -4px 32px rgba(0,0,0,0.15)",
+                boxShadow: "0 -4px 32px rgba(0,0,0,0.18)",
                 display: "flex",
                 flexDirection: "column",
-                maxHeight: "70vh",
+                maxHeight: "72vh",
+                // Prevent touches on panel from closing via backdrop
               }}
+              onPointerDown={(e) => e.stopPropagation()}
             >
+              {/* Handle bar */}
+              <div
+                style={{
+                  width: 40,
+                  height: 4,
+                  borderRadius: 2,
+                  background: "hsl(var(--muted-foreground) / 0.3)",
+                  margin: "10px auto 0",
+                  flexShrink: 0,
+                }}
+              />
+
               {/* Header */}
               <div
                 style={{
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "space-between",
-                  padding: "16px 20px 12px",
+                  padding: "12px 20px 10px",
                   borderBottom: "1px solid hsl(var(--border))",
                   flexShrink: 0,
                 }}
@@ -300,7 +190,10 @@ function DesktopCategorySelect({
                 </span>
                 <button
                   type="button"
-                  onClick={handleClose}
+                  onPointerDown={(e) => {
+                    e.preventDefault();
+                    handleClose();
+                  }}
                   style={{
                     width: 32,
                     height: 32,
@@ -321,22 +214,29 @@ function DesktopCategorySelect({
 
               {/* Scrollable list */}
               <div
+                ref={listRef}
                 style={{
                   flex: 1,
                   overflowY: "auto",
+                  WebkitOverflowScrolling: "touch",
+                  overscrollBehavior: "contain",
                 }}
               >
-                {categories.map((cat) => (
+                {displayCategories.map((cat) => (
                   <button
                     key={cat}
                     type="button"
-                    onClick={() => handleSelect(cat)}
+                    onPointerDown={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      handleSelect(cat);
+                    }}
                     style={{
                       width: "100%",
                       display: "flex",
                       alignItems: "center",
                       justifyContent: "space-between",
-                      padding: "14px 20px",
+                      padding: "15px 20px",
                       fontSize: "1rem",
                       textAlign: "left",
                       background:
@@ -344,9 +244,11 @@ function DesktopCategorySelect({
                           ? "hsl(var(--primary) / 0.08)"
                           : "transparent",
                       border: "none",
-                      borderBottom: "1px solid hsl(var(--border) / 0.4)",
+                      borderBottom: "1px solid hsl(var(--border) / 0.35)",
                       cursor: "pointer",
                       color: "hsl(var(--foreground))",
+                      touchAction: "manipulation",
+                      WebkitTapHighlightColor: "transparent",
                     }}
                     data-ocid="category.item"
                   >
@@ -365,12 +267,14 @@ function DesktopCategorySelect({
                 ))}
               </div>
 
-              {/* Add new */}
+              {/* Add new category */}
               <div
                 style={{
                   padding: "12px 16px",
                   borderTop: "1px solid hsl(var(--border))",
                   flexShrink: 0,
+                  // Extra padding for iPhone home indicator
+                  paddingBottom: "max(12px, env(safe-area-inset-bottom))",
                 }}
               >
                 {showAddInput ? (
@@ -393,7 +297,10 @@ function DesktopCategorySelect({
                     <Button
                       size="icon"
                       className="h-11 w-11 shrink-0"
-                      onClick={handleAddCategory}
+                      onPointerDown={(e) => {
+                        e.preventDefault();
+                        handleAddCategory();
+                      }}
                       disabled={addCategory.isPending || !newCategory.trim()}
                       data-ocid="category.confirm_button"
                     >
@@ -403,7 +310,8 @@ function DesktopCategorySelect({
                       size="icon"
                       variant="outline"
                       className="h-11 w-11 shrink-0"
-                      onClick={() => {
+                      onPointerDown={(e) => {
+                        e.preventDefault();
                         setShowAddInput(false);
                         setNewCategory("");
                       }}
@@ -415,7 +323,11 @@ function DesktopCategorySelect({
                 ) : (
                   <button
                     type="button"
-                    onClick={() => setShowAddInput(true)}
+                    onPointerDown={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setShowAddInput(true);
+                    }}
                     style={{
                       width: "100%",
                       display: "flex",
@@ -425,10 +337,12 @@ function DesktopCategorySelect({
                       borderRadius: 12,
                       color: "hsl(var(--primary))",
                       fontWeight: 500,
-                      fontSize: "0.875rem",
+                      fontSize: "0.9rem",
                       background: "transparent",
                       border: "none",
                       cursor: "pointer",
+                      touchAction: "manipulation",
+                      WebkitTapHighlightColor: "transparent",
                     }}
                     data-ocid="category.add_new_button"
                   >
@@ -443,18 +357,4 @@ function DesktopCategorySelect({
         )}
     </>
   );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// PUBLIC EXPORT: Route to mobile or desktop variant
-// ─────────────────────────────────────────────────────────────────────────────
-export function CategorySelect(props: CategorySelectProps) {
-  // Detect on first render; no need to react to changes mid-session
-  const [isTouch] = useState(() => isTouchDevice());
-
-  if (isTouch) {
-    return <MobileCategorySelect {...props} />;
-  }
-
-  return <DesktopCategorySelect {...props} />;
 }

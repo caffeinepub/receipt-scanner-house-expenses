@@ -19,7 +19,7 @@ import { useScanFolders } from "@/hooks/useScanFolders";
 import { ICON_MAP } from "@/hooks/useSheetConfig";
 import type { SheetConfigMap } from "@/hooks/useSheetConfig";
 import { cn } from "@/lib/utils";
-import { cropReceipt, stitchImages } from "@/utils/imageProcessing";
+import { stitchImages } from "@/utils/imageProcessing";
 import { type OcrResult, runOcr } from "@/utils/ocr";
 import { AlertCircle, Camera, Receipt, RefreshCw, Save, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -159,7 +159,7 @@ export function ScanModal({
     setScannedPreviews((prev) => [...prev, previewUrl]);
   }, []);
 
-  const handleFileCapture = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileCapture = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -168,21 +168,9 @@ export function ScanModal({
       fileInputRef.current.value = "";
     }
 
-    try {
-      // Crop the receipt from the background
-      const croppedBlob = await cropReceipt(file);
-
-      // Create preview URL for the cropped blob
-      const previewUrl = URL.createObjectURL(croppedBlob);
-
-      setScannedBlobs((prev) => [...prev, croppedBlob]);
-      setScannedPreviews((prev) => [...prev, previewUrl]);
-    } catch {
-      // If cropping fails, use original file
-      const previewUrl = URL.createObjectURL(file);
-      setScannedBlobs((prev) => [...prev, file]);
-      setScannedPreviews((prev) => [...prev, previewUrl]);
-    }
+    const previewUrl = URL.createObjectURL(file);
+    setScannedBlobs((prev) => [...prev, file]);
+    setScannedPreviews((prev) => [...prev, previewUrl]);
   };
 
   const handleRemoveScan = (index: number) => {

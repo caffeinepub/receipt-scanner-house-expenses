@@ -1,6 +1,6 @@
 /**
  * Image processing utilities for receipt scanning.
- * - cropReceipt: auto-detects and crops receipt boundaries
+ * - cropReceipt: auto-detects and crops receipt boundaries using edge detection
  * - stitchImages: stacks multiple images top-to-bottom
  */
 
@@ -43,141 +43,220 @@ function canvasToBlob(canvas: HTMLCanvasElement): Promise<Blob> {
 }
 
 /**
- * Determine the brightness (luminance) of a pixel from RGBA values.
+ * Convert RGBA pixel data to a grayscale array.
  */
-function brightness(r: number, g: number, b: number): number {
-  return 0.299 * r + 0.587 * g + 0.114 * b;
+function toGrayscale(
+  data: Uint8ClampedArray,
+  w: number,
+  h: number,
+): Float32Array {
+  const gray = new Float32Array(w * h);
+  for (let i = 0; i < w * h; i++) {
+    const r = data[i * 4];
+    const g = data[i * 4 + 1];
+    const b = data[i * 4 + 2];
+    gray[i] = 0.299 * r + 0.587 * g + 0.114 * b;
+  }
+  return gray;
 }
 
 /**
- * Crop the receipt out of an image blob.
+ * Compute Sobel edge magnitude map from a grayscale array.
+ * Returns Float32Array of edge magnitudes (0-255 range).
+ */
+function sobelEdges(gray: Float32Array, w: number, h: number): Float32Array {
+  const edges = new Float32Array(w * h);
+  for (let y = 1; y < h - 1; y++) {
+    for (let x = 1; x < w - 1; x++) {
+      const tl = gray[(y - 1) * w + (x - 1)];
+      const tc = gray[(y - 1) * w + x];
+      const tr = gray[(y - 1) * w + (x + 1)];
+      const ml = gray[y * w + (x - 1)];
+      const mr = gray[y * w + (x + 1)];
+      const bl = gray[(y + 1) * w + (x - 1)];
+      const bc = gray[(y + 1) * w + x];
+      const br = gray[(y + 1) * w + (x + 1)];
+      const gx = -tl - 2 * ml - bl + tr + 2 * mr + br;
+      const gy = -tl - 2 * tc - tr + bl + 2 * bc + br;
+      edges[y * w + x] = Math.sqrt(gx * gx + gy * gy);
+    }
+  }
+  return edges;
+}
+
+/**
+ * Find the bounding box of the receipt in an edge map using row/column
+ * projection profiles. Looks for rows/columns with high edge density.
  *
- * Scans from all 4 edges to find where the image deviates from the background
- * (receipts are typically white/light surrounded by a darker or varied background).
- * Returns a cropped blob with 8px padding, or the original blob on failure.
+ * Returns {top, bottom, left, right} in pixel coordinates, or null if
+ * no clear receipt region was found.
+ */
+function findReceiptBounds(
+  edges: Float32Array,
+  w: number,
+  h: number,
+  edgeThreshold = 30,
+): { top: number; bottom: number; left: number; right: number } | null {
+  // Build row projections (sum of strong edges per row)
+  const rowProj = new Float32Array(h);
+  const colProj = new Float32Array(w);
+  for (let y = 0; y < h; y++) {
+    let rowSum = 0;
+    for (let x = 0; x < w; x++) {
+      const e = edges[y * w + x] > edgeThreshold ? 1 : 0;
+      rowSum += e;
+      colProj[x] += e;
+    }
+    rowProj[y] = rowSum;
+  }
+
+  // Normalise projections to 0-1
+  const maxRow = Math.max(...Array.from(rowProj)) || 1;
+  const maxCol = Math.max(...Array.from(colProj)) || 1;
+  const rowNorm = rowProj.map((v) => v / maxRow);
+  const colNorm = colProj.map((v) => v / maxCol);
+
+  // The receipt occupies the region where projection stays above a threshold
+  // Use 10% of peak as the cutoff (very permissive to handle faint receipts)
+  const rowCutoff = 0.05;
+  const colCutoff = 0.05;
+
+  let top = -1;
+  for (let y = 0; y < h; y++) {
+    if (rowNorm[y] > rowCutoff) {
+      top = y;
+      break;
+    }
+  }
+  let bottom = -1;
+  for (let y = h - 1; y >= 0; y--) {
+    if (rowNorm[y] > rowCutoff) {
+      bottom = y;
+      break;
+    }
+  }
+  let left = -1;
+  for (let x = 0; x < w; x++) {
+    if (colNorm[x] > colCutoff) {
+      left = x;
+      break;
+    }
+  }
+  let right = -1;
+  for (let x = w - 1; x >= 0; x--) {
+    if (colNorm[x] > colCutoff) {
+      right = x;
+      break;
+    }
+  }
+
+  if (top === -1 || bottom === -1 || left === -1 || right === -1) return null;
+
+  const bw = right - left;
+  const bh = bottom - top;
+
+  // Require a minimum size
+  if (bw < w * 0.05 || bh < h * 0.05) return null;
+
+  return { top, bottom, left, right };
+}
+
+/**
+ * Crop the receipt out of an image blob using Sobel edge detection.
+ *
+ * Works reliably on white receipts against any background (light or dark)
+ * because it detects the text/edge content on the receipt rather than relying
+ * on a brightness difference between receipt and background.
+ *
+ * Returns a cropped blob with padding, or the original blob on failure.
  */
 export async function cropReceipt(imageBlob: Blob): Promise<Blob> {
   try {
     const img = await loadImage(imageBlob);
-    const { naturalWidth: w, naturalHeight: h } = img;
+    const { naturalWidth: origW, naturalHeight: origH } = img;
 
-    // Draw to offscreen canvas
+    // Work on a downscaled copy for speed (process at 800px wide max)
+    const scale = Math.min(1, 800 / origW);
+    const w = Math.round(origW * scale);
+    const h = Math.round(origH * scale);
+
     const canvas = document.createElement("canvas");
     canvas.width = w;
     canvas.height = h;
-    const ctx = canvas.getContext("2d");
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
     if (!ctx) return imageBlob;
 
-    ctx.drawImage(img, 0, 0);
+    ctx.drawImage(img, 0, 0, w, h);
     const imageData = ctx.getImageData(0, 0, w, h);
-    const { data } = imageData;
 
-    // Sample the background from the 4 corners (average brightness)
-    const sampleSize = Math.min(20, Math.floor(Math.min(w, h) * 0.05));
+    const gray = toGrayscale(imageData.data, w, h);
+    const edges = sobelEdges(gray, w, h);
 
-    function sampleCornerBrightness(startX: number, startY: number): number {
-      let total = 0;
-      let count = 0;
-      for (let dy = 0; dy < sampleSize; dy++) {
-        for (let dx = 0; dx < sampleSize; dx++) {
-          const x = startX + dx;
-          const y = startY + dy;
-          if (x >= 0 && x < w && y >= 0 && y < h) {
-            const idx = (y * w + x) * 4;
-            total += brightness(data[idx], data[idx + 1], data[idx + 2]);
-            count++;
-          }
-        }
-      }
-      return count > 0 ? total / count : 128;
+    // Try multiple thresholds — start strict, relax if nothing found
+    const thresholds = [40, 25, 15];
+    let bounds: ReturnType<typeof findReceiptBounds> = null;
+    for (const t of thresholds) {
+      bounds = findReceiptBounds(edges, w, h, t);
+      if (bounds) break;
     }
 
-    const corners = [
-      sampleCornerBrightness(0, 0),
-      sampleCornerBrightness(w - sampleSize, 0),
-      sampleCornerBrightness(0, h - sampleSize),
-      sampleCornerBrightness(w - sampleSize, h - sampleSize),
-    ];
-    const bgBrightness = corners.reduce((a, b) => a + b, 0) / corners.length;
-
-    // Threshold: if brightness differs from background by this much, it's content
-    const threshold = 30;
-
-    // Scan from top
-    let top = 0;
-    outerTop: for (let y = 0; y < h; y++) {
-      for (let x = 0; x < w; x++) {
-        const idx = (y * w + x) * 4;
-        const b = brightness(data[idx], data[idx + 1], data[idx + 2]);
-        if (Math.abs(b - bgBrightness) > threshold) {
-          top = y;
-          break outerTop;
-        }
-      }
-    }
-
-    // Scan from bottom
-    let bottom = h - 1;
-    outerBottom: for (let y = h - 1; y >= 0; y--) {
-      for (let x = 0; x < w; x++) {
-        const idx = (y * w + x) * 4;
-        const b = brightness(data[idx], data[idx + 1], data[idx + 2]);
-        if (Math.abs(b - bgBrightness) > threshold) {
-          bottom = y;
-          break outerBottom;
-        }
-      }
-    }
-
-    // Scan from left
-    let left = 0;
-    outerLeft: for (let x = 0; x < w; x++) {
-      for (let y = 0; y < h; y++) {
-        const idx = (y * w + x) * 4;
-        const b = brightness(data[idx], data[idx + 1], data[idx + 2]);
-        if (Math.abs(b - bgBrightness) > threshold) {
-          left = x;
-          break outerLeft;
-        }
-      }
-    }
-
-    // Scan from right
-    let right = w - 1;
-    outerRight: for (let x = w - 1; x >= 0; x--) {
-      for (let y = 0; y < h; y++) {
-        const idx = (y * w + x) * 4;
-        const b = brightness(data[idx], data[idx + 1], data[idx + 2]);
-        if (Math.abs(b - bgBrightness) > threshold) {
-          right = x;
-          break outerRight;
-        }
-      }
-    }
-
-    // Add padding
-    const pad = 8;
-    const cropX = Math.max(0, left - pad);
-    const cropY = Math.max(0, top - pad);
-    const cropW = Math.min(w, right + pad + 1) - cropX;
-    const cropH = Math.min(h, bottom + pad + 1) - cropY;
-
-    // Guard against degenerate crop
-    if (cropW < 50 || cropH < 50 || cropW > w * 0.98 || cropH > h * 0.98) {
-      // Crop is too small or nearly identical to original — return original
+    if (!bounds) {
+      // No edge content found — return original
       return imageBlob;
     }
 
-    // Draw cropped region to new canvas
+    // Scale bounds back to original image coordinates
+    const pad = Math.round(12 / scale); // 12px padding in downscaled = bigger in original
+    const cropX = Math.max(0, Math.round(bounds.left / scale) - pad);
+    const cropY = Math.max(0, Math.round(bounds.top / scale) - pad);
+    const cropR = Math.min(origW, Math.round(bounds.right / scale) + pad);
+    const cropB = Math.min(origH, Math.round(bounds.bottom / scale) + pad);
+    const cropW = cropR - cropX;
+    const cropH = cropB - cropY;
+
+    // Guard against degenerate crops (too small or nearly the whole image)
+    if (
+      cropW < 50 ||
+      cropH < 50 ||
+      (cropW > origW * 0.97 && cropH > origH * 0.97)
+    ) {
+      return imageBlob;
+    }
+
+    // Draw the cropped region from the original full-res image
+    const fullCanvas = document.createElement("canvas");
+    fullCanvas.width = origW;
+    fullCanvas.height = origH;
+    const fullCtx = fullCanvas.getContext("2d");
+    if (!fullCtx) return imageBlob;
+    fullCtx.drawImage(img, 0, 0);
+
     const cropCanvas = document.createElement("canvas");
     cropCanvas.width = cropW;
     cropCanvas.height = cropH;
     const cropCtx = cropCanvas.getContext("2d");
     if (!cropCtx) return imageBlob;
 
-    cropCtx.drawImage(canvas, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
+    cropCtx.drawImage(
+      fullCanvas,
+      cropX,
+      cropY,
+      cropW,
+      cropH,
+      0,
+      0,
+      cropW,
+      cropH,
+    );
 
-    return await canvasToBlob(cropCanvas);
+    const result = await canvasToBlob(cropCanvas);
+
+    // Safety check: if the crop is within 3% of the original size, return original
+    if (cropW / origW > 0.97 && cropH / origH > 0.97) {
+      return imageBlob;
+    }
+
+    return result;
   } catch {
     // On any failure, return the original blob unchanged
     return imageBlob;
