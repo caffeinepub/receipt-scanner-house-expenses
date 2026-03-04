@@ -1,3 +1,4 @@
+import { AllReceiptsView } from "@/components/AllReceiptsView";
 import { ScanModal } from "@/components/ScanModal";
 import { SheetManagerSheet } from "@/components/SheetManagerSheet";
 import { SheetView } from "@/components/SheetView";
@@ -8,7 +9,7 @@ import { SHEETS } from "@/hooks/useQueries";
 import { ICON_MAP } from "@/hooks/useSheetConfig";
 import { useSheetConfig } from "@/hooks/useSheetConfig";
 import { cn } from "@/lib/utils";
-import { Camera, Settings } from "lucide-react";
+import { Camera, List, Settings } from "lucide-react";
 import type React from "react";
 import { useEffect, useState } from "react";
 
@@ -37,6 +38,7 @@ export default function App() {
   const [activeSheet, setActiveSheet] = useState<SheetName>("Cabin");
   const [scanOpen, setScanOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [allReceiptsOpen, setAllReceiptsOpen] = useState(false);
   const [selectedYear, setSelectedYear] = useState<number>(() => {
     const saved = localStorage.getItem("receiptScanner_selectedYear");
     if (saved) {
@@ -112,6 +114,15 @@ export default function App() {
             aria-label="Tax year"
             maxLength={4}
           />
+          <button
+            type="button"
+            onClick={() => setAllReceiptsOpen(true)}
+            className="w-8 h-8 rounded-full bg-muted flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors tap-highlight-none"
+            data-ocid="header.all_receipts_button"
+            aria-label="View all receipts"
+          >
+            <List className="h-4 w-4" />
+          </button>
           <button
             type="button"
             onClick={() => setSettingsOpen(true)}
@@ -199,6 +210,16 @@ export default function App() {
         sheetConfigs={sheetConfigs}
         updateSheetConfig={updateSheetConfig}
       />
+
+      {/* ── All Receipts View ── */}
+      {allReceiptsOpen && (
+        <AllReceiptsView
+          onClose={() => setAllReceiptsOpen(false)}
+          year={selectedYear}
+          sheetConfigs={sheetConfigs}
+          categories={categories}
+        />
+      )}
 
       <Toaster position="top-center" richColors />
 

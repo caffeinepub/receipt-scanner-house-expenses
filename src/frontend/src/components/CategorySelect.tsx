@@ -62,7 +62,13 @@ function MobileCategorySelect({
     try {
       await addCategory.mutateAsync(trimmed);
       toast.success(`Category "${trimmed}" added`);
-    } catch {
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      // "already exists" means the category is already in the backend — treat
+      // it as a success since the value is already set and usable.
+      if (msg.toLowerCase().includes("already")) {
+        return;
+      }
       toast.error(
         "Failed to save category — it will still be used for this entry",
       );

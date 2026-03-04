@@ -10,9 +10,11 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
+import { useActor } from "@/hooks/useActor";
 import { useAddEntry, useAllCompanyNames } from "@/hooks/useQueries";
 import type { SheetName } from "@/hooks/useQueries";
 import { SHEETS } from "@/hooks/useQueries";
+import { saveReceiptImage } from "@/hooks/useReceiptImages";
 import { useScanFolders } from "@/hooks/useScanFolders";
 import { ICON_MAP } from "@/hooks/useSheetConfig";
 import type { SheetConfigMap } from "@/hooks/useSheetConfig";
@@ -79,6 +81,7 @@ export function ScanModal({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const addEntry = useAddEntry();
   const existingCompanies = useAllCompanyNames();
+  const { actor, isFetching: actorFetching } = useActor();
   const { folders, createFolder, addEntryToFolder } = useScanFolders();
 
   const resetState = useCallback(() => {
@@ -219,10 +222,19 @@ export function ScanModal({
   };
 
   const handleSave = async () => {
-    if (!validate()) return;
+    // Guard: actor not yet connected
+    if (!actor || actorFetching) {
+      toast.error("Still connecting to backend — please try again in a moment");
+      return;
+    }
+
+    if (!validate()) {
+      toast.error("Please fill in all required fields");
+      return;
+    }
 
     try {
-      await addEntry.mutateAsync({
+      const savedEntry = await addEntry.mutateAsync({
         sheet: form.sheet,
         date: form.date,
         companyName: form.companyName.trim(),
@@ -231,29 +243,39 @@ export function ScanModal({
         notes: form.notes.trim(),
       });
 
-      // Save to folder if one was selected
-      if (selectedFolderId && scannedBlobs.length > 0) {
+      // Save the receipt image linked to the new entry ID
+      if (scannedBlobs.length > 0) {
         try {
-          // Convert the stitched blob to a data URL for persistent storage
           const blobToSave =
             scannedBlobs.length === 1
               ? scannedBlobs[0]
               : await stitchImages(scannedBlobs);
 
-          const reader = new FileReader();
-          reader.onloadend = () => {
-            const dataUrl = reader.result as string;
-            addEntryToFolder(selectedFolderId, {
-              imageDataUrl: dataUrl,
-              savedAt: new Date().toISOString(),
-              receiptDate: form.date,
-              companyName: form.companyName.trim(),
-              amount: Number.parseFloat(form.amount),
-            });
-          };
-          reader.readAsDataURL(blobToSave);
+          // Use a Promise so we await the FileReader before closing
+          await new Promise<void>((resolve) => {
+            const reader = new FileReader();
+            reader.onloadend = () => {
+              const dataUrl = reader.result as string;
+              // Store image linked to backend entry ID
+              saveReceiptImage(savedEntry.id, dataUrl);
+
+              // Also save to folder if one was selected
+              if (selectedFolderId) {
+                addEntryToFolder(selectedFolderId, {
+                  imageDataUrl: dataUrl,
+                  savedAt: new Date().toISOString(),
+                  receiptDate: form.date,
+                  companyName: form.companyName.trim(),
+                  amount: Number.parseFloat(form.amount),
+                });
+              }
+              resolve();
+            };
+            reader.onerror = () => resolve(); // Non-fatal
+            reader.readAsDataURL(blobToSave);
+          });
         } catch {
-          // Non-fatal — folder save failure shouldn't block the entry save
+          // Non-fatal — image save failure shouldn't block the entry save
         }
       }
 
@@ -261,8 +283,9 @@ export function ScanModal({
       onSaved(form.sheet as SheetName);
       resetState();
       onClose();
-    } catch {
-      toast.error("Failed to save receipt");
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      toast.error(`Failed to save receipt: ${detail}`);
     }
   };
 
@@ -693,13 +716,13 @@ export function ScanModal({
                 <Button
                   className="h-12 gap-2 font-semibold"
                   onClick={handleSave}
-                  disabled={addEntry.isPending}
+                  disabled={addEntry.isPending || actorFetching}
                   data-ocid="scan.save_button"
                 >
-                  {addEntry.isPending ? (
+                  {addEntry.isPending || actorFetching ? (
                     <>
                       <span className="h-4 w-4 rounded-full border-2 border-primary-foreground/30 border-t-primary-foreground animate-spin" />
-                      Saving…
+                      {actorFetching ? "Connecting…" : "Saving…"}
                     </>
                   ) : (
                     <>

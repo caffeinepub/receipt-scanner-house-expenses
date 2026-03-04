@@ -4,15 +4,18 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useSheetEntries } from "@/hooks/useQueries";
 import type { ExpenseEntry, SheetName } from "@/hooks/useQueries";
 import { useAllEntries } from "@/hooks/useQueries";
+import { getAllReceiptImages } from "@/hooks/useReceiptImages";
 import { cn } from "@/lib/utils";
+import { downloadReceiptImage } from "@/utils/downloadReceipt";
 import { exportToXlsx } from "@/utils/exportXlsx";
 import {
-  ChevronRight,
   Download,
+  Image,
   Pencil,
   Receipt,
   Trash2,
   TrendingUp,
+  X,
 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -74,6 +77,8 @@ export function SheetView({ sheet, categories, year }: SheetViewProps) {
   const { data: allEntries } = useAllEntries();
   const [editEntry, setEditEntry] = useState<ExpenseEntry | null>(null);
   const [deleteEntry, setDeleteEntry] = useState<ExpenseEntry | null>(null);
+  const [previewImage, setPreviewImage] = useState<string | null>(null);
+  const receiptImages = getAllReceiptImages();
 
   const sorted = [...(entries ?? [])]
     .filter((e) => e.date.startsWith(String(year)))
@@ -155,89 +160,127 @@ export function SheetView({ sheet, categories, year }: SheetViewProps) {
           </div>
         ) : (
           <div className="space-y-2" data-ocid="sheet.entries_table">
-            {sorted.map((entry, idx) => (
-              <div
-                key={entry.id.toString()}
-                className="bg-card rounded-xl border border-border p-3.5 flex gap-3 items-start"
-                data-ocid={`entry.item.${idx + 1}`}
-              >
-                {/* Left: category dot */}
+            {sorted.map((entry, idx) => {
+              const entryImage = receiptImages[entry.id.toString()] ?? null;
+              return (
                 <div
-                  className={cn(
-                    "w-2.5 h-2.5 rounded-full shrink-0 mt-1.5",
-                    getCategoryColor(entry.category).includes("bg-")
-                      ? getCategoryColor(entry.category)
-                          .split(" ")[0]
-                          .replace("bg-", "bg-")
-                      : "bg-primary",
-                  )}
-                  style={{
-                    backgroundColor: undefined,
-                  }}
+                  key={entry.id.toString()}
+                  className="bg-card rounded-xl border border-border overflow-hidden"
+                  data-ocid={`entry.item.${idx + 1}`}
                 >
-                  <div
-                    className={cn(
-                      "w-2.5 h-2.5 rounded-full",
-                      getCategoryColor(entry.category)
-                        .split(" ")[0]
-                        .replace("text-", "bg-"),
-                    )}
-                  />
-                </div>
-
-                {/* Center: details */}
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-start justify-between gap-2 mb-1">
-                    <p className="font-semibold text-sm text-foreground truncate">
-                      {entry.companyName}
-                    </p>
-                    <span className="font-bold text-sm text-foreground shrink-0">
-                      {formatCurrency(entry.amount)}
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-xs text-muted-foreground">
-                      {formatDate(entry.date)}
-                    </span>
-                    <span
-                      className={cn(
-                        "text-xs px-2 py-0.5 rounded-full font-medium",
-                        getCategoryColor(entry.category),
-                      )}
+                  {/* Receipt image thumbnail (if available) */}
+                  {entryImage && (
+                    <button
+                      type="button"
+                      onClick={() => setPreviewImage(entryImage)}
+                      className="w-full h-24 overflow-hidden bg-muted/30 block tap-highlight-none"
+                      title="View receipt image"
+                      data-ocid={`entry.image_preview.${idx + 1}`}
                     >
-                      {entry.category}
-                    </span>
-                  </div>
-                  {entry.notes && (
-                    <p className="text-xs text-muted-foreground mt-1 line-clamp-1">
-                      {entry.notes}
-                    </p>
+                      <img
+                        src={entryImage}
+                        alt="Receipt scan"
+                        className="w-full h-full object-cover object-top"
+                      />
+                    </button>
                   )}
-                </div>
 
-                {/* Right: actions */}
-                <div className="flex flex-col gap-1 shrink-0">
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-8 w-8 text-muted-foreground hover:text-primary"
-                    onClick={() => setEditEntry(entry)}
-                    data-ocid={`entry.edit_button.${idx + 1}`}
-                  >
-                    <Pencil className="h-3.5 w-3.5" />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-8 w-8 text-muted-foreground hover:text-destructive"
-                    onClick={() => setDeleteEntry(entry)}
-                    data-ocid={`entry.delete_button.${idx + 1}`}
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </Button>
+                  <div className="p-3.5 flex gap-3 items-start">
+                    {/* Left: category dot */}
+                    <div className="shrink-0 mt-1.5">
+                      <div
+                        className={cn(
+                          "w-2.5 h-2.5 rounded-full",
+                          getCategoryColor(entry.category)
+                            .split(" ")[0]
+                            .replace("text-", "bg-"),
+                        )}
+                      />
+                    </div>
+
+                    {/* Center: details */}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-start justify-between gap-2 mb-1">
+                        <p className="font-semibold text-sm text-foreground truncate">
+                          {entry.companyName}
+                        </p>
+                        <span className="font-bold text-sm text-foreground shrink-0">
+                          {formatCurrency(entry.amount)}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-xs text-muted-foreground">
+                          {formatDate(entry.date)}
+                        </span>
+                        <span
+                          className={cn(
+                            "text-xs px-2 py-0.5 rounded-full font-medium",
+                            getCategoryColor(entry.category),
+                          )}
+                        >
+                          {entry.category}
+                        </span>
+                        {entryImage && (
+                          <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-primary/10 text-primary flex items-center gap-1">
+                            <Image className="h-2.5 w-2.5" />
+                            Image
+                          </span>
+                        )}
+                      </div>
+                      {entry.notes && (
+                        <p className="text-xs text-muted-foreground mt-1 line-clamp-1">
+                          {entry.notes}
+                        </p>
+                      )}
+                    </div>
+
+                    {/* Right: actions */}
+                    <div className="flex flex-col gap-1 shrink-0">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 text-muted-foreground hover:text-primary"
+                        onClick={() => setEditEntry(entry)}
+                        data-ocid={`entry.edit_button.${idx + 1}`}
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className={cn(
+                          "h-8 w-8",
+                          entryImage
+                            ? "text-muted-foreground hover:text-foreground"
+                            : "text-muted-foreground/30 cursor-not-allowed",
+                        )}
+                        onClick={() =>
+                          entryImage ? downloadReceiptImage(entry) : undefined
+                        }
+                        disabled={!entryImage}
+                        title={
+                          entryImage
+                            ? "Download receipt image"
+                            : "No image saved for this receipt"
+                        }
+                        data-ocid={`entry.download_button.${idx + 1}`}
+                      >
+                        <Download className="h-3.5 w-3.5" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                        onClick={() => setDeleteEntry(entry)}
+                        data-ocid={`entry.delete_button.${idx + 1}`}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
@@ -254,6 +297,37 @@ export function SheetView({ sheet, categories, year }: SheetViewProps) {
         open={!!deleteEntry}
         onClose={() => setDeleteEntry(null)}
       />
+
+      {/* Full-screen receipt image preview */}
+      {previewImage && (
+        <dialog
+          open
+          className="fixed inset-0 z-[200] bg-black/90 flex flex-col w-full h-full max-w-none max-h-none m-0 p-0 border-0"
+          data-ocid="sheet.image_preview_modal"
+          aria-label="Receipt image preview"
+        >
+          <div className="flex items-center justify-between px-4 py-3 shrink-0">
+            <span className="text-white text-sm font-medium">
+              Receipt Image
+            </span>
+            <button
+              type="button"
+              onClick={() => setPreviewImage(null)}
+              className="w-9 h-9 rounded-full bg-white/10 flex items-center justify-center text-white tap-highlight-none"
+              data-ocid="sheet.image_preview_close_button"
+            >
+              <X className="h-5 w-5" />
+            </button>
+          </div>
+          <div className="flex-1 overflow-auto flex items-start justify-center p-4">
+            <img
+              src={previewImage}
+              alt="Full receipt"
+              className="max-w-full rounded-xl shadow-2xl"
+            />
+          </div>
+        </dialog>
+      )}
     </div>
   );
 }
