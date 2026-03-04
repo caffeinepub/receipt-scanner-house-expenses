@@ -5,6 +5,7 @@ import { useSheetEntries } from "@/hooks/useQueries";
 import type { ExpenseEntry, SheetName } from "@/hooks/useQueries";
 import { useAllEntries } from "@/hooks/useQueries";
 import { getAllReceiptImages } from "@/hooks/useReceiptImages";
+import type { SheetConfigMap } from "@/hooks/useSheetConfig";
 import { cn } from "@/lib/utils";
 import { downloadReceiptImage } from "@/utils/downloadReceipt";
 import { exportToXlsx } from "@/utils/exportXlsx";
@@ -26,6 +27,7 @@ interface SheetViewProps {
   sheet: SheetName;
   categories: string[];
   year: number;
+  sheetConfigs?: SheetConfigMap;
 }
 
 function formatCurrency(amount: number) {
@@ -72,7 +74,12 @@ function getCategoryColor(category: string) {
   return CATEGORY_COLORS[category] ?? "bg-muted text-muted-foreground";
 }
 
-export function SheetView({ sheet, categories, year }: SheetViewProps) {
+export function SheetView({
+  sheet,
+  categories,
+  year,
+  sheetConfigs,
+}: SheetViewProps) {
   const { data: entries, isLoading } = useSheetEntries(sheet);
   const { data: allEntries } = useAllEntries();
   const [editEntry, setEditEntry] = useState<ExpenseEntry | null>(null);
@@ -89,7 +96,7 @@ export function SheetView({ sheet, categories, year }: SheetViewProps) {
   const handleExport = async () => {
     if (!allEntries) return;
     try {
-      await exportToXlsx(allEntries, year);
+      await exportToXlsx(allEntries, year, sheetConfigs);
       toast.success(`Exported house-expenses-${year}.xlsx`);
     } catch {
       toast.error("Export failed");

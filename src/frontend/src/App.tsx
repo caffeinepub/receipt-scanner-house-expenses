@@ -141,6 +141,7 @@ export default function App() {
           sheet={activeSheet}
           categories={categories}
           year={selectedYear}
+          sheetConfigs={sheetConfigs}
         />
       </main>
 

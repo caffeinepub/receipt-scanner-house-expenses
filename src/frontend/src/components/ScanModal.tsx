@@ -28,6 +28,17 @@ import { CategorySelect } from "./CategorySelect";
 import { CompanySelect } from "./CompanySelect";
 import { FolderSelect } from "./FolderSelect";
 
+// Module-level helpers so they are stable and don't need to be in useCallback deps
+function getLastScannedDate(): string {
+  const saved = localStorage.getItem("receiptScanner_lastScannedDate");
+  if (saved) return saved;
+  return new Date().toISOString().split("T")[0];
+}
+
+function saveLastScannedDate(date: string) {
+  localStorage.setItem("receiptScanner_lastScannedDate", date);
+}
+
 type ScanStep = "capture" | "processing" | "review";
 
 interface ScanFormData {
@@ -68,7 +79,7 @@ export function ScanModal({
 
   const [form, setForm] = useState<ScanFormData>({
     sheet: defaultSheet ?? "",
-    date: new Date().toISOString().split("T")[0],
+    date: getLastScannedDate(),
     companyName: "",
     category: "",
     amount: "",
@@ -103,7 +114,7 @@ export function ScanModal({
     setSelectedFolderId("");
     setForm({
       sheet: defaultSheet ?? "",
-      date: new Date().toISOString().split("T")[0],
+      date: getLastScannedDate(),
       companyName: "",
       category: "",
       amount: "",
@@ -191,9 +202,12 @@ export function ScanModal({
       setOcrProgress(100);
 
       setOcrResult(result);
+      // Use the date from the receipt; if OCR couldn't read it, fall back to
+      // the date from the last successfully scanned receipt.
+      const resolvedDate = result.date ?? getLastScannedDate();
       setForm((prev) => ({
         ...prev,
-        date: result.date,
+        date: resolvedDate,
         companyName: result.companyName,
         amount: result.amount > 0 ? result.amount.toFixed(2) : "",
       }));
@@ -278,6 +292,9 @@ export function ScanModal({
           // Non-fatal — image save failure shouldn't block the entry save
         }
       }
+
+      // Persist the date so future scans can fall back to it if OCR can't read the date
+      if (form.date) saveLastScannedDate(form.date);
 
       toast.success("Receipt saved successfully");
       onSaved(form.sheet as SheetName);
@@ -606,7 +623,7 @@ export function ScanModal({
               {/* Date */}
               <div className="space-y-2">
                 <Label className="text-sm font-semibold text-foreground/80 uppercase tracking-wide">
-                  Date (Column A) *
+                  Date *
                 </Label>
                 <Input
                   type="date"
@@ -625,7 +642,7 @@ export function ScanModal({
               {/* Company */}
               <div className="space-y-2">
                 <Label className="text-sm font-semibold text-foreground/80 uppercase tracking-wide">
-                  Company (Column B) *
+                  Company *
                 </Label>
                 <CompanySelect
                   value={form.companyName}
@@ -645,7 +662,7 @@ export function ScanModal({
               {/* Category */}
               <div className="space-y-2">
                 <Label className="text-sm font-semibold text-foreground/80 uppercase tracking-wide">
-                  Category (Column C) *
+                  Category *
                 </Label>
                 <CategorySelect
                   categories={categories}
@@ -662,7 +679,7 @@ export function ScanModal({
               {/* Amount */}
               <div className="space-y-2">
                 <Label className="text-sm font-semibold text-foreground/80 uppercase tracking-wide">
-                  Total Amount (Column D) *
+                  Total Amount *
                 </Label>
                 <div className="relative">
                   <span className="absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground font-medium">
@@ -689,7 +706,7 @@ export function ScanModal({
               {/* Notes */}
               <div className="space-y-2">
                 <Label className="text-sm font-semibold text-foreground/80 uppercase tracking-wide">
-                  Notes (Column E)
+                  Notes
                 </Label>
                 <Textarea
                   value={form.notes}

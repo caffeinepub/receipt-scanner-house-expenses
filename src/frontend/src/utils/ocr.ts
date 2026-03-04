@@ -1,5 +1,5 @@
 export interface OcrResult {
-  date: string;
+  date: string | null;
   companyName: string;
   amount: number;
   rawText: string;
@@ -51,10 +51,9 @@ async function getTesseract(): Promise<TesseractLib> {
 /**
  * Parse a date string from OCR text.
  * Tries common receipt date formats.
+ * Returns null if no date is found (so caller can fall back to last scanned date).
  */
-function parseDate(text: string): string {
-  const today = new Date().toISOString().split("T")[0];
-
+function parseDate(text: string): string | null {
   const patterns = [
     // MM/DD/YYYY or M/D/YYYY
     /\b(\d{1,2})\/(\d{1,2})\/(\d{4})\b/,
@@ -120,7 +119,8 @@ function parseDate(text: string): string {
     }
   }
 
-  return today;
+  // Return null so the caller can fall back to the last scanned receipt date
+  return null;
 }
 
 /**
