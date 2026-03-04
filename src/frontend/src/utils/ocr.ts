@@ -1,7 +1,8 @@
 export interface OcrResult {
   date: string | null;
   companyName: string;
-  amount: number;
+  /** Parsed amount, or null when nothing could be extracted */
+  amount: number | null;
   rawText: string;
   confidence: number;
 }
@@ -125,9 +126,11 @@ function parseDate(text: string): string | null {
 
 /**
  * Extract total amount from OCR text.
- * Looks for TOTAL, GRAND TOTAL, AMOUNT DUE, BALANCE DUE keywords.
+ * Looks for TOTAL, GRAND TOTAL, AMOUNT DUE, BALANCE DUE keywords first.
+ * Falls back to the highest dollar amount found anywhere on the receipt.
+ * Returns null only when no numeric amounts at all are found.
  */
-function parseAmount(text: string): number {
+function parseAmount(text: string): number | null {
   const lines = text.split("\n");
 
   // Priority keywords — higher = check first
@@ -142,16 +145,16 @@ function parseAmount(text: string): number {
   ];
 
   for (const keyword of totalKeywords) {
-    for (const line of lines) {
+    for (let idx = 0; idx < lines.length; idx++) {
+      const line = lines[idx];
       if (keyword.test(line)) {
-        // Look for a dollar amount in this line
+        // Look for a dollar amount in this line (with or without $ sign)
         const amountMatch = line.match(/\$?\s*(\d{1,6}[.,]\d{2})\b/);
         if (amountMatch) {
           const cleaned = amountMatch[1].replace(",", ".");
           return Number.parseFloat(cleaned);
         }
         // Look in next line too
-        const idx = lines.indexOf(line);
         if (idx < lines.length - 1) {
           const nextLine = lines[idx + 1];
           const nextMatch = nextLine.match(/\$?\s*(\d{1,6}[.,]\d{2})\b/);
@@ -164,20 +167,27 @@ function parseAmount(text: string): number {
     }
   }
 
-  // Fallback: find the largest dollar amount on the receipt
+  // Fallback: find the largest numeric amount on the receipt
+  // Catches both "$12.34" and plain "12.34" patterns
   const allAmounts: number[] = [];
-  const amountRegex = /\$\s*(\d{1,6}[.,]\d{2})\b/g;
+  const amountRegex = /\$?\s*(\d{1,6}[.,]\d{2})\b/g;
   let m: RegExpExecArray | null;
   // biome-ignore lint/suspicious/noAssignInExpressions: standard regex loop
   while ((m = amountRegex.exec(text)) !== null) {
-    allAmounts.push(Number.parseFloat(m[1].replace(",", ".")));
+    const val = Number.parseFloat(m[1].replace(",", "."));
+    // Filter out obvious non-amounts: quantities like 1.00, 2.00 that are likely
+    // unit counts, and very small amounts under $0.50 that are likely tax fractions
+    if (val >= 0.5) {
+      allAmounts.push(val);
+    }
   }
 
   if (allAmounts.length > 0) {
     return Math.max(...allAmounts);
   }
 
-  return 0;
+  // No amounts found at all
+  return null;
 }
 
 /**
@@ -235,7 +245,7 @@ export async function runOcr(imageSource: File | Blob): Promise<OcrResult> {
     return {
       date: parseDate(rawText),
       companyName: parseCompanyName(rawText),
-      amount: parseAmount(rawText),
+      amount: parseAmount(rawText), // null when nothing found
       rawText,
       confidence,
     };

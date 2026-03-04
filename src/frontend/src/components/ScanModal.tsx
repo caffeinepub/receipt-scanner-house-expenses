@@ -29,10 +29,14 @@ import { CompanySelect } from "./CompanySelect";
 import { FolderSelect } from "./FolderSelect";
 
 // Module-level helpers so they are stable and don't need to be in useCallback deps
-function getLastScannedDate(): string {
-  const saved = localStorage.getItem("receiptScanner_lastScannedDate");
-  if (saved) return saved;
-  return new Date().toISOString().split("T")[0];
+/**
+ * Returns the date from the last successfully saved receipt, or null if none.
+ * Callers should only fall back to today's date as a last resort for the
+ * initial default form state; OCR fallback should use null to leave the field
+ * blank when there is truly no previous receipt date stored.
+ */
+function getLastScannedDate(): string | null {
+  return localStorage.getItem("receiptScanner_lastScannedDate");
 }
 
 function saveLastScannedDate(date: string) {
@@ -79,7 +83,8 @@ export function ScanModal({
 
   const [form, setForm] = useState<ScanFormData>({
     sheet: defaultSheet ?? "",
-    date: getLastScannedDate(),
+    // Pre-fill with last scanned date; falls back to today only if nothing saved yet
+    date: getLastScannedDate() ?? new Date().toISOString().split("T")[0],
     companyName: "",
     category: "",
     amount: "",
@@ -114,7 +119,7 @@ export function ScanModal({
     setSelectedFolderId("");
     setForm({
       sheet: defaultSheet ?? "",
-      date: getLastScannedDate(),
+      date: getLastScannedDate() ?? new Date().toISOString().split("T")[0],
       companyName: "",
       category: "",
       amount: "",
@@ -203,13 +208,23 @@ export function ScanModal({
 
       setOcrResult(result);
       // Use the date from the receipt; if OCR couldn't read it, fall back to
-      // the date from the last successfully scanned receipt.
-      const resolvedDate = result.date ?? getLastScannedDate();
+      // the date from the last successfully scanned receipt. If no previous
+      // receipt exists yet, leave the field showing today so it isn't blank.
+      const resolvedDate =
+        result.date ??
+        getLastScannedDate() ??
+        new Date().toISOString().split("T")[0];
+      // Use the amount from OCR (already the highest found when no total keyword
+      // matched). If OCR returned null it means no numeric amount was detected.
+      const resolvedAmount =
+        result.amount !== null && result.amount > 0
+          ? result.amount.toFixed(2)
+          : "";
       setForm((prev) => ({
         ...prev,
         date: resolvedDate,
         companyName: result.companyName,
-        amount: result.amount > 0 ? result.amount.toFixed(2) : "",
+        amount: resolvedAmount,
       }));
 
       setTimeout(() => {
