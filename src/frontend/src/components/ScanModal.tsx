@@ -27,6 +27,7 @@ import { toast } from "sonner";
 import { CategorySelect } from "./CategorySelect";
 import { CompanySelect } from "./CompanySelect";
 import { FolderSelect } from "./FolderSelect";
+import { LiveCameraView } from "./LiveCameraView";
 
 // Module-level helpers so they are stable and don't need to be in useCallback deps
 /**
@@ -75,6 +76,7 @@ export function ScanModal({
   const [ocrResult, setOcrResult] = useState<OcrResult | null>(null);
   const [ocrProgress, setOcrProgress] = useState(0);
   const [capturedImage, setCapturedImage] = useState<string | null>(null);
+  const [showCamera, setShowCamera] = useState(false);
 
   // Multi-scan state
   const [scannedBlobs, setScannedBlobs] = useState<Blob[]>([]);
@@ -128,20 +130,26 @@ export function ScanModal({
     setErrors({});
   }, [defaultSheet, capturedImage]);
 
-  // Auto-open camera when modal opens
+  // Auto-open live camera when modal opens
   useEffect(() => {
     if (open) {
-      const timer = setTimeout(() => {
-        fileInputRef.current?.click();
-      }, 300);
-      return () => clearTimeout(timer);
+      setShowCamera(true);
     }
   }, [open]);
 
   const handleClose = () => {
     resetState();
+    setShowCamera(false);
     onClose();
   };
+
+  /** Called by LiveCameraView when the user captures a (already cropped) blob. */
+  const handleLiveCapture = useCallback((blob: Blob) => {
+    setShowCamera(false);
+    const previewUrl = URL.createObjectURL(blob);
+    setScannedBlobs((prev) => [...prev, blob]);
+    setScannedPreviews((prev) => [...prev, previewUrl]);
+  }, []);
 
   const handleFileCapture = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -338,10 +346,8 @@ export function ScanModal({
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
     }
-    // Auto-open camera for rescan
-    setTimeout(() => {
-      fileInputRef.current?.click();
-    }, 100);
+    // Open live camera for rescan
+    setShowCamera(true);
   };
 
   const confidenceColor =
@@ -485,7 +491,7 @@ export function ScanModal({
               <Button
                 variant="outline"
                 className="w-full h-12 gap-2 font-medium"
-                onClick={() => fileInputRef.current?.click()}
+                onClick={() => setShowCamera(true)}
                 data-ocid="scan.add_another_button"
               >
                 <Camera className="h-4 w-4" />
@@ -768,6 +774,20 @@ export function ScanModal({
           </div>
         )}
       </SheetContent>
+
+      {/* Live camera viewfinder — renders as fixed overlay above the sheet */}
+      {showCamera && (
+        <LiveCameraView
+          onCapture={handleLiveCapture}
+          onClose={() => {
+            setShowCamera(false);
+            // If user cancels before any scan, close the whole modal
+            if (scannedBlobs.length === 0) {
+              handleClose();
+            }
+          }}
+        />
+      )}
     </Sheet>
   );
 }
