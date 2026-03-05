@@ -38,6 +38,9 @@ export function EditModal({
     amount: "",
     notes: "",
   });
+  // When the category picker opens we hide the Sheet so Radix's scroll-lock
+  // layer doesn't intercept touch events on the picker portal (iOS Safari fix).
+  const [categoryPickerOpen, setCategoryPickerOpen] = useState(false);
 
   const updateEntry = useUpdateEntry();
 
@@ -81,7 +84,10 @@ export function EditModal({
   };
 
   return (
-    <Sheet open={open} onOpenChange={(o) => !o && onClose()}>
+    <Sheet
+      open={open && !categoryPickerOpen}
+      onOpenChange={(o) => !o && onClose()}
+    >
       <SheetContent
         side="bottom"
         className="h-[90dvh] rounded-t-2xl p-0 flex flex-col overflow-hidden"
@@ -171,6 +177,7 @@ export function EditModal({
                 categories={categories}
                 value={form.category}
                 onChange={(v) => setForm((prev) => ({ ...prev, category: v }))}
+                onOpenChange={setCategoryPickerOpen}
               />
             </div>
 

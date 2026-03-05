@@ -63,6 +63,7 @@ interface ScanModalProps {
   categories: string[];
   defaultSheet?: SheetName;
   sheetConfigs?: SheetConfigMap;
+  initialManualEntry?: boolean;
 }
 
 export function ScanModal({
@@ -72,13 +73,21 @@ export function ScanModal({
   categories,
   defaultSheet,
   sheetConfigs,
+  initialManualEntry = false,
 }: ScanModalProps) {
-  const [step, setStep] = useState<ScanStep>("capture");
+  const [step, setStep] = useState<ScanStep>(
+    initialManualEntry ? "review" : "capture",
+  );
   const [ocrResult, setOcrResult] = useState<OcrResult | null>(null);
   const [ocrProgress, setOcrProgress] = useState(0);
   const [capturedImage, setCapturedImage] = useState<string | null>(null);
   const [showCamera, setShowCamera] = useState(false);
-  const [isManualEntry, setIsManualEntry] = useState(false);
+  const [isManualEntry, setIsManualEntry] = useState(initialManualEntry);
+  // When the category or folder picker opens we hide the Sheet so Radix's
+  // scroll-lock layer doesn't intercept touch events on the overlay
+  // (iOS Safari fix).
+  const [categoryPickerOpen, setCategoryPickerOpen] = useState(false);
+  const [folderPickerOpen, setFolderPickerOpen] = useState(false);
 
   // Multi-scan state
   const [scannedBlobs, setScannedBlobs] = useState<Blob[]>([]);
@@ -105,7 +114,7 @@ export function ScanModal({
   const { folders, createFolder, addEntryToFolder } = useScanFolders();
 
   const resetState = useCallback(() => {
-    setStep("capture");
+    setStep(initialManualEntry ? "review" : "capture");
     setOcrResult(null);
     setOcrProgress(0);
     if (capturedImage) {
@@ -121,7 +130,9 @@ export function ScanModal({
     });
     setScannedBlobs([]);
     setSelectedFolderId("");
-    setIsManualEntry(false);
+    setIsManualEntry(initialManualEntry);
+    setCategoryPickerOpen(false);
+    setFolderPickerOpen(false);
     setForm({
       sheet: defaultSheet ?? "",
       date: getLastScannedDate() ?? new Date().toISOString().split("T")[0],
@@ -131,22 +142,26 @@ export function ScanModal({
       notes: "",
     });
     setErrors({});
-  }, [defaultSheet, capturedImage]);
+  }, [defaultSheet, capturedImage, initialManualEntry]);
 
-  // Auto-open live camera when modal opens — we close the sheet first so the
-  // camera renders on top on iOS Safari (video elements render below Sheet overlays).
-  // Skip auto-open when the user chose manual entry.
+  // When the modal opens, set the correct initial step based on initialManualEntry
+  // and auto-open the camera immediately (unless this is a manual entry)
   useEffect(() => {
-    if (open && !isManualEntry) {
-      // Small delay to let the sheet finish its open animation before we
-      // hide it and show the camera
-      const t = setTimeout(() => setShowCamera(true), 350);
-      return () => clearTimeout(t);
+    if (open) {
+      setStep(initialManualEntry ? "review" : "capture");
+      setIsManualEntry(initialManualEntry);
+      if (!initialManualEntry) {
+        // Auto-launch camera so user doesn't need to tap "Open Camera"
+        setShowCamera(true);
+      }
     }
-  }, [open, isManualEntry]);
+  }, [open, initialManualEntry]);
 
-  // When the camera is shown, hide the sheet so nothing sits above the viewfinder
-  const sheetVisible = open && !showCamera;
+  // Hide the sheet when the camera, category picker, or folder picker is active.
+  // This prevents Radix's scroll-lock layer from intercepting touch events on
+  // the portalled / fixed-position overlays (iOS Safari fix).
+  const sheetVisible =
+    open && !showCamera && !categoryPickerOpen && !folderPickerOpen;
 
   const handleClose = () => {
     resetState();
@@ -489,7 +504,7 @@ export function ScanModal({
                     ))}
                     <Receipt className="h-16 w-16 text-muted-foreground/40" />
                     <p className="text-sm text-muted-foreground text-center px-4">
-                      Camera will open automatically
+                      Tap "Open Camera" below to scan a receipt
                     </p>
                   </div>
                   <p className="text-xs text-muted-foreground text-center max-w-xs">
@@ -611,6 +626,7 @@ export function ScanModal({
                     value={selectedFolderId}
                     onChange={setSelectedFolderId}
                     onCreateFolder={createFolder}
+                    onOpenChange={setFolderPickerOpen}
                   />
                 </div>
 
@@ -716,6 +732,7 @@ export function ScanModal({
                     onChange={(v) =>
                       setForm((prev) => ({ ...prev, category: v }))
                     }
+                    onOpenChange={setCategoryPickerOpen}
                   />
                   {errors.category && (
                     <p className="text-xs text-destructive">

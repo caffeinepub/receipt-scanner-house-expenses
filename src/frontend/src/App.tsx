@@ -9,7 +9,7 @@ import { SHEETS } from "@/hooks/useQueries";
 import { ICON_MAP } from "@/hooks/useSheetConfig";
 import { useSheetConfig } from "@/hooks/useSheetConfig";
 import { cn } from "@/lib/utils";
-import { Camera, List, Settings } from "lucide-react";
+import { Camera, List, PenLine, Settings } from "lucide-react";
 import type React from "react";
 import { useEffect, useState } from "react";
 
@@ -37,6 +37,7 @@ const NAV_IDS: Record<SheetName, string> = {
 export default function App() {
   const [activeSheet, setActiveSheet] = useState<SheetName>("Cabin");
   const [scanOpen, setScanOpen] = useState(false);
+  const [manualOpen, setManualOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [allReceiptsOpen, setAllReceiptsOpen] = useState(false);
   const [selectedYear, setSelectedYear] = useState<number>(() => {
@@ -160,20 +161,40 @@ export default function App() {
             />
           ))}
 
-          {/* Center Scan Button */}
-          <div className="flex flex-col items-center flex-1 -mt-5">
-            <button
-              type="button"
-              onClick={() => setScanOpen(true)}
-              className="w-16 h-16 rounded-full bg-primary text-primary-foreground shadow-lg shadow-primary/30 flex items-center justify-center transition-transform active:scale-95 tap-highlight-none"
-              data-ocid="nav.scan_button"
-              aria-label="Scan receipt"
-            >
-              <Camera className="h-7 w-7" />
-            </button>
-            <span className="text-[10px] font-medium text-primary mt-1 mb-1">
-              Scan
-            </span>
+          {/* Center Scan + Manual Buttons */}
+          <div className="flex flex-col items-center flex-1 -mt-5 gap-0">
+            <div className="flex items-end gap-2">
+              {/* Scan Button */}
+              <div className="flex flex-col items-center">
+                <button
+                  type="button"
+                  onClick={() => setScanOpen(true)}
+                  className="w-14 h-14 rounded-full bg-primary text-primary-foreground shadow-lg shadow-primary/30 flex items-center justify-center transition-transform active:scale-95 tap-highlight-none"
+                  data-ocid="nav.scan_button"
+                  aria-label="Scan receipt"
+                >
+                  <Camera className="h-6 w-6" />
+                </button>
+                <span className="text-[10px] font-medium text-primary mt-1 mb-1">
+                  Scan
+                </span>
+              </div>
+              {/* Manual Entry Button */}
+              <div className="flex flex-col items-center">
+                <button
+                  type="button"
+                  onClick={() => setManualOpen(true)}
+                  className="w-14 h-14 rounded-full bg-secondary text-secondary-foreground shadow-md flex items-center justify-center transition-transform active:scale-95 tap-highlight-none"
+                  data-ocid="nav.manual_button"
+                  aria-label="Enter receipt manually"
+                >
+                  <PenLine className="h-6 w-6" />
+                </button>
+                <span className="text-[10px] font-medium text-muted-foreground mt-1 mb-1">
+                  Manual
+                </span>
+              </div>
+            </div>
           </div>
 
           {SHEETS.slice(2, 4).map((sheet) => (
@@ -201,6 +222,20 @@ export default function App() {
         categories={categories}
         defaultSheet={activeSheet}
         sheetConfigs={sheetConfigs}
+      />
+
+      {/* ── Manual Entry Modal ── */}
+      <ScanModal
+        open={manualOpen}
+        onClose={() => setManualOpen(false)}
+        onSaved={(sheet) => {
+          setActiveSheet(sheet);
+          setManualOpen(false);
+        }}
+        categories={categories}
+        defaultSheet={activeSheet}
+        sheetConfigs={sheetConfigs}
+        initialManualEntry={true}
       />
 
       {/* ── Sheet Manager ── */}

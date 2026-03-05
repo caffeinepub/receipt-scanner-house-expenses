@@ -10,6 +10,10 @@ interface FolderSelectProps {
   value: string; // selected folder id, or ""
   onChange: (folderId: string) => void;
   onCreateFolder: (name: string) => ScanFolder;
+  /** Called when the folder picker opens (true) or fully closes (false).
+   *  Parents can use this to hide their Radix Sheet so the scroll-lock
+   *  layer doesn't intercept touch events on the overlay. */
+  onOpenChange?: (open: boolean) => void;
 }
 
 export function FolderSelect({
@@ -17,6 +21,7 @@ export function FolderSelect({
   value,
   onChange,
   onCreateFolder,
+  onOpenChange,
 }: FolderSelectProps) {
   const [open, setOpen] = useState(false);
   const [showNewInput, setShowNewInput] = useState(false);
@@ -35,6 +40,7 @@ export function FolderSelect({
     onChange(folderId);
     setOpen(false);
     setShowNewInput(false);
+    setTimeout(() => onOpenChange?.(false), 50);
   };
 
   const handleCreateFolder = () => {
@@ -45,12 +51,14 @@ export function FolderSelect({
     setNewFolderName("");
     setShowNewInput(false);
     setOpen(false);
+    setTimeout(() => onOpenChange?.(false), 50);
   };
 
   const closeOverlay = () => {
     setOpen(false);
     setShowNewInput(false);
     setNewFolderName("");
+    setTimeout(() => onOpenChange?.(false), 50);
   };
 
   return (
@@ -58,7 +66,12 @@ export function FolderSelect({
       {/* Trigger button */}
       <button
         type="button"
-        onClick={() => setOpen(true)}
+        onClick={() => {
+          onOpenChange?.(true);
+          // Brief delay so parent Sheet can dismiss its scroll-lock before
+          // the overlay renders — prevents iOS touch-event interception.
+          setTimeout(() => setOpen(true), 60);
+        }}
         className={cn(
           "w-full h-12 px-4 flex items-center justify-between gap-2",
           "rounded-xl border border-border bg-card text-sm",

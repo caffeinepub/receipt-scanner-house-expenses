@@ -10,31 +10,23 @@ interface CategorySelectProps {
   categories: string[];
   value: string;
   onChange: (value: string) => void;
+  /** Called when the picker opens (true) or fully closes (false).
+   *  Parents can use this to hide their Radix Sheet so the scroll-lock
+   *  layer doesn't intercept touch events on the portal overlay. */
+  onOpenChange?: (open: boolean) => void;
 }
 
-/**
- * CategorySelect — works reliably on iPhone inside Radix UI Sheet overlays.
- *
- * Strategy: render the picker as a React portal directly on document.body with
- * a very high z-index. This bypasses all Radix UI portal stacking and iOS
- * touch-event interception that occurs when a <select> or custom overlay is
- * nested inside a Sheet component.
- *
- * Touch events use onTouchEnd with preventDefault() to prevent iOS from
- * firing a delayed synthetic click that misses the target after the list
- * has scrolled.
- */
 export function CategorySelect({
   categories,
   value,
   onChange,
+  onOpenChange,
 }: CategorySelectProps) {
   const [open, setOpen] = useState(false);
   const [showAddInput, setShowAddInput] = useState(false);
   const [newCategory, setNewCategory] = useState("");
   const addCategory = useAddCategory();
   const addInputRef = useRef<HTMLInputElement>(null);
-  const listRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (showAddInput) {
@@ -55,15 +47,25 @@ export function CategorySelect({
   }, [open]);
 
   const handleOpen = () => {
-    setOpen(true);
-    setShowAddInput(false);
-    setNewCategory("");
+    // Tell parent to hide its Sheet FIRST, then open the picker after a brief
+    // pause so Radix has time to remove its scroll-lock layer before the portal
+    // renders.  This is the only reliable way to receive touch events on iOS
+    // Safari when the picker is portalled above a Radix Sheet.
+    onOpenChange?.(true);
+    setTimeout(() => {
+      setOpen(true);
+      setShowAddInput(false);
+      setNewCategory("");
+    }, 60);
   };
 
   const handleClose = () => {
     setOpen(false);
     setShowAddInput(false);
     setNewCategory("");
+    // Notify parent AFTER local state is cleared so the Sheet doesn't reappear
+    // before the picker has fully dismissed.
+    setTimeout(() => onOpenChange?.(false), 50);
   };
 
   const handleSelect = (cat: string) => {
@@ -74,7 +76,6 @@ export function CategorySelect({
   const handleAddCategory = async () => {
     const trimmed = newCategory.trim();
     if (!trimmed) return;
-    // Set value immediately so validation passes right away
     onChange(trimmed);
     handleClose();
     if (categories.includes(trimmed)) return;
@@ -90,59 +91,116 @@ export function CategorySelect({
     }
   };
 
-  // Build display options: include current value if not already in list
   const displayCategories =
     value && !categories.includes(value) ? [...categories, value] : categories;
+
+  const itemStyle: React.CSSProperties = {
+    width: "100%",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    padding: "16px 20px",
+    fontSize: "1rem",
+    textAlign: "left",
+    background: "transparent",
+    border: "none",
+    borderBottom: "1px solid hsl(var(--border) / 0.35)",
+    cursor: "pointer",
+    color: "hsl(var(--foreground))",
+    touchAction: "manipulation",
+    WebkitTapHighlightColor: "transparent",
+    userSelect: "none",
+    WebkitUserSelect: "none",
+    pointerEvents: "auto",
+    minHeight: "56px",
+    boxSizing: "border-box",
+  };
 
   return (
     <>
       {/* Trigger button */}
       <button
         type="button"
-        onPointerDown={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          handleOpen();
+        onClick={handleOpen}
+        style={{
+          width: "100%",
+          height: 48,
+          padding: "0 16px",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          borderRadius: 6,
+          border: "1px solid hsl(var(--border))",
+          background: "hsl(var(--card))",
+          fontSize: "1rem",
+          cursor: "pointer",
+          touchAction: "manipulation",
+          WebkitTapHighlightColor: "transparent",
+          pointerEvents: "auto",
         }}
-        className="w-full h-12 px-4 flex items-center justify-between rounded-md border border-border bg-card text-base transition-colors hover:border-primary/50 focus:outline-none focus:ring-2 focus:ring-primary/30"
         data-ocid="scan.category_select"
       >
-        <span className={value ? "text-foreground" : "text-muted-foreground"}>
+        <span
+          style={{
+            color: value
+              ? "hsl(var(--foreground))"
+              : "hsl(var(--muted-foreground))",
+          }}
+        >
           {value || "Select category…"}
         </span>
-        <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" />
+        <ChevronDown
+          style={{
+            width: 16,
+            height: 16,
+            color: "hsl(var(--muted-foreground))",
+            flexShrink: 0,
+          }}
+        />
       </button>
 
-      {/* Portal picker — renders directly on body, above everything */}
+      {/* Portal picker */}
       {open &&
         createPortal(
           <div
             style={{
               position: "fixed",
               inset: 0,
-              zIndex: 2147483647, // max z-index
+              zIndex: 2147483647,
               display: "flex",
               flexDirection: "column",
               justifyContent: "flex-end",
-              // Prevent iOS rubber-band scroll from propagating
               overscrollBehavior: "contain",
+              pointerEvents: "auto",
+              touchAction: "none",
+            }}
+            role="presentation"
+            onClick={(e) => {
+              // Close if clicking the backdrop (not the panel)
+              if (e.target === e.currentTarget) handleClose();
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") handleClose();
             }}
           >
-            {/* Backdrop */}
+            {/* Semi-transparent backdrop */}
             <div
+              role="presentation"
               style={{
                 position: "absolute",
                 inset: 0,
                 backgroundColor: "rgba(0,0,0,0.55)",
+                pointerEvents: "auto",
               }}
-              onPointerDown={(e) => {
-                e.preventDefault();
-                handleClose();
+              onClick={handleClose}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") handleClose();
               }}
             />
 
             {/* Panel */}
             <div
+              role="presentation"
               style={{
                 position: "relative",
                 background: "hsl(var(--background))",
@@ -152,9 +210,13 @@ export function CategorySelect({
                 display: "flex",
                 flexDirection: "column",
                 maxHeight: "72vh",
-                // Prevent touches on panel from closing via backdrop
+                pointerEvents: "auto",
+                touchAction: "auto",
+                userSelect: "none",
+                WebkitUserSelect: "none",
               }}
-              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => e.stopPropagation()}
+              onKeyDown={(e) => e.stopPropagation()}
             >
               {/* Handle bar */}
               <div
@@ -190,10 +252,7 @@ export function CategorySelect({
                 </span>
                 <button
                   type="button"
-                  onPointerDown={(e) => {
-                    e.preventDefault();
-                    handleClose();
-                  }}
+                  onClick={handleClose}
                   style={{
                     width: 32,
                     height: 32,
@@ -205,6 +264,9 @@ export function CategorySelect({
                     justifyContent: "center",
                     border: "none",
                     cursor: "pointer",
+                    touchAction: "manipulation",
+                    WebkitTapHighlightColor: "transparent",
+                    pointerEvents: "auto",
                   }}
                   data-ocid="category.close_button"
                 >
@@ -214,41 +276,25 @@ export function CategorySelect({
 
               {/* Scrollable list */}
               <div
-                ref={listRef}
                 style={{
                   flex: 1,
                   overflowY: "auto",
                   WebkitOverflowScrolling: "touch",
                   overscrollBehavior: "contain",
+                  pointerEvents: "auto",
                 }}
               >
                 {displayCategories.map((cat) => (
                   <button
                     key={cat}
                     type="button"
-                    onPointerDown={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      handleSelect(cat);
-                    }}
+                    onClick={() => handleSelect(cat)}
                     style={{
-                      width: "100%",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "space-between",
-                      padding: "15px 20px",
-                      fontSize: "1rem",
-                      textAlign: "left",
+                      ...itemStyle,
                       background:
                         value === cat
                           ? "hsl(var(--primary) / 0.08)"
                           : "transparent",
-                      border: "none",
-                      borderBottom: "1px solid hsl(var(--border) / 0.35)",
-                      cursor: "pointer",
-                      color: "hsl(var(--foreground))",
-                      touchAction: "manipulation",
-                      WebkitTapHighlightColor: "transparent",
                     }}
                     data-ocid="category.item"
                   >
@@ -273,8 +319,8 @@ export function CategorySelect({
                   padding: "12px 16px",
                   borderTop: "1px solid hsl(var(--border))",
                   flexShrink: 0,
-                  // Extra padding for iPhone home indicator
                   paddingBottom: "max(12px, env(safe-area-inset-bottom))",
+                  pointerEvents: "auto",
                 }}
               >
                 {showAddInput ? (
@@ -297,10 +343,7 @@ export function CategorySelect({
                     <Button
                       size="icon"
                       className="h-11 w-11 shrink-0"
-                      onPointerDown={(e) => {
-                        e.preventDefault();
-                        handleAddCategory();
-                      }}
+                      onClick={handleAddCategory}
                       disabled={addCategory.isPending || !newCategory.trim()}
                       data-ocid="category.confirm_button"
                     >
@@ -310,8 +353,7 @@ export function CategorySelect({
                       size="icon"
                       variant="outline"
                       className="h-11 w-11 shrink-0"
-                      onPointerDown={(e) => {
-                        e.preventDefault();
+                      onClick={() => {
                         setShowAddInput(false);
                         setNewCategory("");
                       }}
@@ -323,11 +365,7 @@ export function CategorySelect({
                 ) : (
                   <button
                     type="button"
-                    onPointerDown={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      setShowAddInput(true);
-                    }}
+                    onClick={() => setShowAddInput(true)}
                     style={{
                       width: "100%",
                       display: "flex",
@@ -343,6 +381,8 @@ export function CategorySelect({
                       cursor: "pointer",
                       touchAction: "manipulation",
                       WebkitTapHighlightColor: "transparent",
+                      pointerEvents: "auto",
+                      minHeight: "48px",
                     }}
                     data-ocid="category.add_new_button"
                   >
