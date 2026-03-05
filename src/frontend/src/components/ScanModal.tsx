@@ -21,7 +21,7 @@ import type { SheetConfigMap } from "@/hooks/useSheetConfig";
 import { cn } from "@/lib/utils";
 import { stitchImages } from "@/utils/imageProcessing";
 import { type OcrResult, runOcr } from "@/utils/ocr";
-import { AlertCircle, Camera, Receipt, RefreshCw, Save, X } from "lucide-react";
+import { AlertCircle, Camera, PenLine, Receipt, Save, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { toast } from "sonner";
@@ -78,6 +78,7 @@ export function ScanModal({
   const [ocrProgress, setOcrProgress] = useState(0);
   const [capturedImage, setCapturedImage] = useState<string | null>(null);
   const [showCamera, setShowCamera] = useState(false);
+  const [isManualEntry, setIsManualEntry] = useState(false);
 
   // Multi-scan state
   const [scannedBlobs, setScannedBlobs] = useState<Blob[]>([]);
@@ -120,6 +121,7 @@ export function ScanModal({
     });
     setScannedBlobs([]);
     setSelectedFolderId("");
+    setIsManualEntry(false);
     setForm({
       sheet: defaultSheet ?? "",
       date: getLastScannedDate() ?? new Date().toISOString().split("T")[0],
@@ -133,14 +135,15 @@ export function ScanModal({
 
   // Auto-open live camera when modal opens — we close the sheet first so the
   // camera renders on top on iOS Safari (video elements render below Sheet overlays).
+  // Skip auto-open when the user chose manual entry.
   useEffect(() => {
-    if (open) {
+    if (open && !isManualEntry) {
       // Small delay to let the sheet finish its open animation before we
       // hide it and show the camera
       const t = setTimeout(() => setShowCamera(true), 350);
       return () => clearTimeout(t);
     }
-  }, [open]);
+  }, [open, isManualEntry]);
 
   // When the camera is shown, hide the sheet so nothing sits above the viewfinder
   const sheetVisible = open && !showCamera;
@@ -382,14 +385,21 @@ export function ScanModal({
                     key={s}
                     className={cn(
                       "h-1 flex-1 rounded-full transition-colors",
-                      i === 0 && step !== "capture"
-                        ? "bg-primary"
-                        : i === 1 && step === "review"
+                      // Manual entry: light up capture (skipped) and review (active) pills
+                      isManualEntry && step === "review"
+                        ? i === 1
+                          ? "bg-muted"
+                          : "bg-primary"
+                        : i === 0 && step !== "capture"
                           ? "bg-primary"
-                          : i ===
-                              ["capture", "processing", "review"].indexOf(step)
-                            ? "bg-primary/50"
-                            : "bg-muted",
+                          : i === 1 && step === "review"
+                            ? "bg-primary"
+                            : i ===
+                                ["capture", "processing", "review"].indexOf(
+                                  step,
+                                )
+                              ? "bg-primary/50"
+                              : "bg-muted",
                     )}
                   />
                 ),
@@ -509,6 +519,18 @@ export function ScanModal({
                   data-ocid="scan.continue_button"
                 >
                   Continue to Review
+                </Button>
+                <Button
+                  variant="ghost"
+                  className="w-full h-11 gap-2 text-muted-foreground"
+                  onClick={() => {
+                    setIsManualEntry(true);
+                    setStep("review");
+                  }}
+                  data-ocid="scan.manual_entry_button"
+                >
+                  <PenLine className="h-4 w-4" />
+                  Enter Manually
                 </Button>
               </div>
             </div>
@@ -750,11 +772,21 @@ export function ScanModal({
                   <Button
                     variant="outline"
                     className="h-12 gap-2"
-                    onClick={handleRescan}
+                    onClick={
+                      capturedImage === null && scannedBlobs.length === 0
+                        ? () => {
+                            setIsManualEntry(false);
+                            setStep("capture");
+                            setShowCamera(true);
+                          }
+                        : handleRescan
+                    }
                     data-ocid="scan.rescan_button"
                   >
-                    <RefreshCw className="h-4 w-4" />
-                    Rescan
+                    <Camera className="h-4 w-4" />
+                    {capturedImage === null && scannedBlobs.length === 0
+                      ? "Add Scan"
+                      : "Rescan"}
                   </Button>
                   <Button
                     className="h-12 gap-2 font-semibold"
